@@ -25,7 +25,8 @@ For a stable distribution, register a public Resend client with the exact callba
 2. Connect Resend in Maildock. Select an existing inbox or explicitly create one. Inbox creation can affect your Resend bill. Create it before requesting a code.
 3. Use that inbox's exact address on the website. For example, `work@ompathak.dev` and `work@ompathakd.dev` are different addresses on different domains.
 4. Open the Maildock panel and request a code on the website. Maildock watches the selected inbox while the panel is open. Any verification code that arrived in the last three minutes appears in the panel; there is nothing to start, and no sender or code length to type.
-5. When the website shows its code field, click the Maildock toolbar button once. That gesture allows Maildock to fill that tab. Navigating between pages on the same site keeps the permission; a new site needs one more click.
+5. When the website shows its code field, click the Maildock toolbar button once. That gesture allows Maildock to fill that tab. Navigating between pages on the same site keeps the permission; a new site needs one more click. After a fill, **Always allow <site>** grants that one site permanently so the next login there needs no toolbar click; remove it any time under _Allowed websites_. **Copy code** works everywhere, including pages Maildock cannot fill.
+   Emails that sign you in with a link instead of a code show the link's host and an **Open link** button; nothing opens until you press it.
 6. Check the sender, subject, and the website named on the button, then choose **Fill … on <site>**. Filling is your confirmation. After the first fill, Maildock remembers the sender for that website and tells you when a later code comes from a different address. Maildock does not click Submit. A website may submit automatically in response to input.
 7. **Disconnect** revokes the current Resend grant. Reconnect after a browser restart because credentials are stored only for the browser session.
 
@@ -35,7 +36,9 @@ Supported fields: one identifiable verification input, or one group of single-ch
 
 - The service worker owns OAuth, token rotation, provider access, and the inbox watch. The panel receives selected message metadata and candidate codes, never credentials or full email bodies.
 - Tokens and fresh codes use trusted `chrome.storage.session`. Only preferences and the public OAuth client ID persist locally. Nothing uses browser sync.
-- Page access uses a toolbar gesture and `activeTab`. There are no permanent content scripts or all-site host permissions.
+- Page access uses a toolbar gesture and `activeTab`, or a per-site grant the user makes from the panel. There are no content scripts and no all-site host permission at install time.
+- Every card shows Resend's sender authentication result (SPF/DKIM/DMARC, computed by Resend's receiving server). A sender that fails authentication cannot be filled, copied, or opened. A sender whose domain matches the current website is listed first and marked.
+- Sign-in links are offered only when the message has no code, the subject reads like a sign-in request, and exactly one HTTPS link is labelled as that action. Bare-IP and punycode hosts are refused.
 - Only codes received in the last three minutes are offered, and a filled or discarded message never returns. Each fill binds the exact HTTPS origin, tab, and document shown on the button at the moment of the click; the worker rechecks all three before injecting.
 - Only the bundled panel document can issue validated commands. There is no webpage mailbox bridge or generic fetch command.
 - Email HTML is parsed as data. It is never rendered, executed, or fetched. There is no telemetry, remote code, or LLM processing.

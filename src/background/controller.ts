@@ -1,6 +1,7 @@
 import { AppError, publicError } from '../core/errors';
 import { freshCandidates, freshWindowMs } from '../core/matching';
 import {
+  type Candidate,
   type Command,
   commandSchema,
   type Inbox,
@@ -11,7 +12,7 @@ import {
 } from '../core/model';
 import { connect, disconnect } from './auth';
 import { captureTarget, fillTarget } from './page';
-import { createInbox, listInboxes, recentMessages } from './resend';
+import { createInbox, listInboxes, recentMessages, senderCheck } from './resend';
 import {
   getAuth,
   getInboxes,
@@ -23,7 +24,7 @@ import {
 } from './storage';
 
 const idleWatch: Watch = {
-  codes: [],
+  items: [],
   consumed: [],
   checkedAt: 0,
   nextPollAt: 0,
@@ -47,9 +48,9 @@ export async function state(): Promise<ViewState> {
   ]);
   const now = Date.now();
   let watch = auth ? (stored ?? idleWatch) : idleWatch;
-  const codes = watch.codes.filter((value) => value.receivedAt >= now - freshWindowMs);
-  if (codes.length !== watch.codes.length || (!auth && stored)) {
-    watch = { ...watch, codes };
+  const items = watch.items.filter((value) => value.receivedAt >= now - freshWindowMs);
+  if (items.length !== watch.items.length || (!auth && stored)) {
+    watch = { ...watch, items };
     await saveWatch(auth ? watch : null);
   }
   const { clientId: _, ...preferences } = settings;
@@ -66,9 +67,15 @@ async function poll(force = false): Promise<Watch> {
   if (!inbox || (!force && now < watch.nextPollAt)) return watch;
   try {
     const messages = await recentMessages(inbox, now - freshWindowMs);
+    const checks = new Map(watch.items.map((value) => [value.messageId, value.check]));
+    const consumed = new Set(watch.consumed);
+    for (const item of freshCandidates(messages, inbox, consumed, Date.now(), checks)) {
+      if (!checks.has(item.messageId) || item.check === 'unknown')
+        checks.set(item.messageId, await senderCheck(item.messageId));
+    }
     const next: Watch = {
       ...watch,
-      codes: freshCandidates(messages, inbox, new Set(watch.consumed), Date.now()),
+      items: freshCandidates(messages, inbox, consumed, Date.now(), checks),
       checkedAt: now,
       nextPollAt: now + 3000,
       note: null,
@@ -103,6 +110,34 @@ async function rememberSender(origin: string, sender: string): Promise<void> {
   });
 }
 
+// Re-fetches mail and resolves the item right before it is released, so a stale panel can never
+// release an expired item or one whose sender check failed in the meantime.
+async function release<K extends Candidate['kind']>(
+  messageId: string,
+  kind: K,
+): Promise<{ watch: Watch; item: Extract<Candidate, { kind: K }> }> {
+  const watch = await poll(true);
+  const item = watch.items.find((value) => value.messageId === messageId);
+  if (!item || item.kind !== kind || item.receivedAt < Date.now() - freshWindowMs)
+    throw new AppError('no-code', 'That item is no longer available. Review the current list.');
+  if (item.check === 'fail')
+    throw new AppError('sender-check', 'The sender failed authentication. Do not use this email.');
+  return { watch, item: item as Extract<Candidate, { kind: K }> };
+}
+
+async function consume(
+  watch: Watch,
+  messageId: Candidate['messageId'],
+  lastFill: Watch['lastFill'],
+) {
+  await saveWatch({
+    ...watch,
+    items: watch.items.filter((value) => value.messageId !== messageId),
+    consumed: [...watch.consumed, messageId].slice(-200),
+    lastFill,
+  });
+}
+
 async function fill(command: Extract<Command, { type: 'watch.fill' }>): Promise<void> {
   const target = await captureTarget();
   if (
@@ -111,18 +146,16 @@ async function fill(command: Extract<Command, { type: 'watch.fill' }>): Promise<
     target.origin !== command.target.origin
   )
     throw new AppError('page-changed', 'The page changed. Check the website shown and try again.');
-  const watch = await poll(true);
-  const candidate = watch.codes.find((value) => value.messageId === command.messageId);
-  if (!candidate || candidate.receivedAt < Date.now() - freshWindowMs)
-    throw new AppError('no-code', 'That code is no longer available. Review the current codes.');
-  await fillTarget(target, candidate.code);
-  await saveWatch({
-    ...watch,
-    codes: watch.codes.filter((value) => value.messageId !== candidate.messageId),
-    consumed: [...watch.consumed, candidate.messageId].slice(-200),
-    lastFill: { origin: target.origin, at: Date.now() },
-  });
-  await rememberSender(target.origin, candidate.sender);
+  const { watch, item } = await release(command.messageId, 'code');
+  await fillTarget(target, item.code);
+  await consume(watch, item.messageId, { origin: target.origin, at: Date.now() });
+  await rememberSender(target.origin, item.sender);
+}
+
+async function open(command: Extract<Command, { type: 'watch.open' }>): Promise<void> {
+  const { watch, item } = await release(command.messageId, 'link');
+  await chrome.tabs.create({ url: item.url, active: true });
+  await consume(watch, item.messageId, watch.lastFill);
 }
 
 async function execute(command: Command): Promise<Response> {
@@ -163,13 +196,12 @@ async function execute(command: Command): Promise<Response> {
     case 'watch.fill':
       await fill(command);
       break;
+    case 'watch.open':
+      await open(command);
+      break;
     case 'watch.dismiss': {
       const watch = (await state()).watch;
-      await saveWatch({
-        ...watch,
-        codes: watch.codes.filter((value) => value.messageId !== command.messageId),
-        consumed: [...watch.consumed, command.messageId].slice(-200),
-      });
+      await consume(watch, command.messageId, watch.lastFill);
       break;
     }
     case 'watch.done':

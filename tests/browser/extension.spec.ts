@@ -26,6 +26,9 @@ let deliveredAt: string | null;
 let revoked: boolean;
 let refreshes: number;
 let revokedUpstream: boolean;
+let authentication: { spf: string; dkim: string; dmarc: string } | null;
+let mail: 'code' | 'link';
+const linkId = 'f5ddee04-8643-4e3f-9c13-e21b6c2dbfff';
 
 async function command(value: Command) {
   const raw: unknown = await panel.evaluate(
@@ -53,6 +56,8 @@ test.beforeEach(async () => {
   revoked = false;
   refreshes = 0;
   revokedUpstream = false;
+  authentication = { spf: 'pass', dkim: 'pass', dmarc: 'pass' };
+  mail = 'code';
   const extension = resolve('.output/chrome-mv3');
   context = await chromium.launchPersistentContext('', {
     channel: 'chromium',
@@ -118,20 +123,35 @@ test.beforeEach(async () => {
         json = {
           data: deliveredAt
             ? [
-                {
-                  id: emailId,
-                  direction: 'inbound',
-                  from: 'Example <accounts@example.com>',
-                  to: [inbox.email_address],
-                  subject: 'Your sign-in code',
-                  text: 'Your verification code is 123456.',
-                  html: null,
-                  received_at: deliveredAt,
-                },
+                mail === 'code'
+                  ? {
+                      id: emailId,
+                      direction: 'inbound',
+                      from: 'Example <accounts@example.com>',
+                      to: [inbox.email_address],
+                      subject: 'Your sign-in code',
+                      text: 'Your verification code is 123456.',
+                      html: null,
+                      received_at: deliveredAt,
+                    }
+                  : {
+                      id: linkId,
+                      direction: 'inbound',
+                      from: 'Example <accounts@example.com>',
+                      to: [inbox.email_address],
+                      subject: 'Sign in to Example',
+                      text: null,
+                      html: '<p>Use the link below.</p><a href="https://login.example.test/magic?token=secret-token-value">Sign in to Example</a>',
+                      received_at: deliveredAt,
+                    },
               ]
             : [],
           has_more: false,
         };
+        break;
+      case `/emails/receiving/${emailId}`:
+      case `/emails/receiving/${linkId}`:
+        json = { authentication };
         break;
       default:
         await route.fulfill({ status: 404, json: { error: 'Unexpected fixture request' } });
@@ -196,13 +216,16 @@ test('connects, lists fresh mail, fills the allowed tab on request, and revokes 
     timeout: 10_000,
   });
   await expect(panel.getByText('123456', { exact: true })).toBeVisible();
+  await expect(panel.getByText('Verified sender')).toBeVisible();
+  await expect(panel.getByRole('button', { name: 'Copy code' })).toBeEnabled();
   await panel.screenshot({ path: 'artifacts/code-ready.png', fullPage: true });
   await grantTab();
   const polled = await command({ type: 'watch.poll' });
   if (!polled.ok || !polled.target) throw new Error('Target capture failed');
   expect(polled.target.origin).toBe('https://login.example.test');
-  const code = polled.state.watch.codes[0];
-  if (!code) throw new Error('Code not listed');
+  const code = polled.state.watch.items[0];
+  if (code?.kind !== 'code') throw new Error('Code not listed');
+  expect(code.check).toBe('pass');
   await expect(website.locator('#otp')).toHaveValue('');
   const filled = await command({
     type: 'watch.fill',
@@ -213,7 +236,14 @@ test('connects, lists fresh mail, fills the allowed tab on request, and revokes 
   await expect(website.locator('#otp')).toHaveValue('123456');
   await expect(website.locator('body')).not.toHaveAttribute('data-submitted', 'true');
   const again = await command({ type: 'watch.poll' });
-  expect(again.ok && again.state.watch.codes).toEqual([]);
+  expect(again.ok && again.state.watch.items).toEqual([]);
+  // Optional per-site permission is offered only after a fill, from the panel, as a user gesture.
+  await expect(
+    panel.getByRole('button', { name: 'Always allow login.example.test' }),
+  ).toBeVisible();
+  expect((await worker.evaluate(() => chrome.permissions.getAll())).origins).toEqual([
+    'https://api.resend.com/*',
+  ]);
   expect(again.ok && again.state.watch.lastFill?.origin).toBe('https://login.example.test');
   const storage = await worker.evaluate(async () => ({
     local: await chrome.storage.local.get(null),
@@ -224,6 +254,7 @@ test('connects, lists fresh mail, fills the allowed tab on request, and revokes 
   expect(JSON.stringify(storage.local)).not.toContain('refresh-token');
   expect(JSON.stringify(storage.local)).not.toContain('123456');
   expect(JSON.stringify(storage.session.watch)).not.toContain('123456');
+  expect(JSON.stringify(storage.local)).not.toContain('secret-token-value');
   expect(storage.local.settings).toMatchObject({
     rules: [{ origin: 'https://login.example.test', sender: 'accounts@example.com' }],
   });
@@ -247,22 +278,22 @@ test('rejects a stale page, survives navigation, and does not expose a mailbox b
   await expect
     .poll(async () => {
       const response = await command({ type: 'watch.poll' });
-      return response.ok ? response.state.watch.codes.length : response.error;
+      return response.ok ? response.state.watch.items.length : response.error;
     })
     .toBe(1);
   const after = await command({ type: 'watch.poll' });
-  if (!after.ok || !after.target || !after.state.watch.codes[0]) throw new Error('Poll failed');
+  if (!after.ok || !after.target || !after.state.watch.items[0]) throw new Error('Poll failed');
   expect(after.target.documentId).not.toBe(before.target.documentId);
   const stale = await command({
     type: 'watch.fill',
-    messageId: after.state.watch.codes[0].messageId,
+    messageId: after.state.watch.items[0].messageId,
     target: before.target,
   });
   expect(stale).toMatchObject({ ok: false, code: 'page-changed' });
   await expect(website.locator('#otp')).toHaveValue('');
   const fresh = await command({
     type: 'watch.fill',
-    messageId: after.state.watch.codes[0].messageId,
+    messageId: after.state.watch.items[0].messageId,
     target: after.target,
   });
   expect(fresh.ok).toBe(true);
@@ -277,6 +308,64 @@ test('rejects a stale page, survives navigation, and does not expose a mailbox b
       const response = await command({ type: 'watch.poll' });
       return response.ok ? response.state : response.code;
     })
-    .toMatchObject({ connected: false, watch: { codes: [] } });
+    .toMatchObject({ connected: false, watch: { items: [] } });
   await expect(panel.getByRole('button', { name: 'Continue with Resend' })).toBeVisible();
+});
+
+test('blocks a sender that failed authentication and opens a sign-in link only on request', async () => {
+  await panel.getByLabel('I understand the account access').check();
+  await panel.getByRole('button', { name: 'Continue with Resend' }).click();
+  await expect(panel.getByText('Resend connected', { exact: true })).toBeVisible();
+  await grantTab();
+  authentication = { spf: 'fail', dkim: 'fail', dmarc: 'fail' };
+  deliveredAt = new Date(Date.now() - 2000).toISOString();
+  await expect.poll(async () => (await command({ type: 'watch.poll' })).ok).toBe(true);
+  const polled = await command({ type: 'watch.poll' });
+  if (!polled.ok || !polled.target) throw new Error('Target capture failed');
+  const blocked = polled.state.watch.items[0];
+  if (blocked?.kind !== 'code') throw new Error('Code not listed');
+  expect(blocked.check).toBe('fail');
+  const refused = await command({
+    type: 'watch.fill',
+    messageId: blocked.messageId,
+    target: polled.target,
+  });
+  expect(!refused.ok && refused.code).toBe('sender-check');
+  await expect(website.locator('#otp')).toHaveValue('');
+  await expect(panel.getByText('Sender check failed')).toBeVisible();
+  await expect(panel.getByRole('button', { name: /^Fill 123456/ })).toBeDisabled();
+  await expect(panel.getByRole('button', { name: 'Copy code' })).toBeDisabled();
+
+  const dismissed = await command({ type: 'watch.dismiss', messageId: blocked.messageId });
+  expect(dismissed.ok).toBe(true);
+  authentication = null;
+  mail = 'link';
+  deliveredAt = new Date().toISOString();
+  await context.route('https://login.example.test/magic**', (route) =>
+    route.fulfill({ contentType: 'text/html', body: '<title>Signed in</title>' }),
+  );
+  await expect
+    .poll(async () => {
+      const result = await command({ type: 'watch.poll' });
+      return result.ok ? result.state.watch.items[0] : null;
+    })
+    .toMatchObject({ kind: 'link', check: 'unknown' });
+  await expect(panel.getByText('Sender check unavailable')).toBeVisible();
+  await expect(panel.getByText('login.example.test', { exact: true })).toBeVisible();
+  const pagesBefore = context.pages().length;
+  // A tab created by the worker can start loading before Playwright attaches its route, so the
+  // navigation is observed through the request log rather than the final document.
+  const requested: string[] = [];
+  context.on('request', (request) => requested.push(request.url()));
+  const [opened] = await Promise.all([
+    context.waitForEvent('page'),
+    panel.getByRole('button', { name: 'Open link on login.example.test' }).click(),
+  ]);
+  await opened.waitForLoadState();
+  await expect
+    .poll(() => requested)
+    .toContain('https://login.example.test/magic?token=secret-token-value');
+  expect(context.pages().length).toBe(pagesBefore + 1);
+  const after = await command({ type: 'watch.poll' });
+  expect(after.ok && after.state.watch.items).toEqual([]);
 });

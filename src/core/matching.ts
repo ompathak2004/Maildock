@@ -1,5 +1,11 @@
 import { Parser } from 'htmlparser2';
-import { type Candidate, emailAddress, type Inbox, type MailMessage } from './model';
+import {
+  type Candidate,
+  emailAddress,
+  type Inbox,
+  type MailMessage,
+  type SenderCheck,
+} from './model';
 
 export function senderAddress(from: string): string | null {
   const match = /<([^<>]+)>\s*$/.exec(from);
@@ -29,29 +35,59 @@ const blocks = new Set([
   'center',
 ]);
 
-function messageText(message: MailMessage): string {
-  if (message.text?.trim()) return message.text;
+interface Anchor {
+  href: string;
+  label: string;
+}
+
+function parseHtml(html: string): { text: string; anchors: Anchor[] } {
   let text = '';
   let hidden = 0;
+  let anchor: Anchor | null = null;
+  const anchors: Anchor[] = [];
   const excluded = new Set(['script', 'style', 'head', 'blockquote']);
   const parser = new Parser(
     {
-      onopentag(name) {
+      onopentag(name, attributes) {
         if (excluded.has(name)) hidden++;
         else if (name === 'br' && !hidden) text += '\n';
+        else if (name === 'a' && !hidden) anchor = { href: attributes.href ?? '', label: '' };
       },
       onclosetag(name) {
         if (excluded.has(name)) hidden--;
         if (!hidden) text += blocks.has(name) ? '\n' : ' ';
+        if (name === 'a' && anchor) {
+          anchors.push(anchor);
+          anchor = null;
+        }
       },
       ontext(value) {
-        if (!hidden) text += value;
+        if (hidden) return;
+        text += value;
+        if (anchor) anchor.label += value;
       },
     },
     { decodeEntities: true },
   );
-  parser.end(message.html ?? '');
-  return text;
+  parser.end(html);
+  return { text, anchors };
+}
+
+function messageText(message: MailMessage): string {
+  if (message.text?.trim()) return message.text;
+  return parseHtml(message.html ?? '').text;
+}
+
+// Codes are often typeset in groups ("735 918", "4821-7730") that the token scan would treat as
+// separate numbers. Groups are joined only when nothing digit-like follows, so phone numbers and
+// longer account numbers keep their shape.
+function joinGroups(text: string): string {
+  return text
+    .replace(
+      /(?<![\d-])(?<!\d[ \u00a0-])(\d{2})[ \u00a0](\d{2})[ \u00a0](\d{2})(?![ \u00a0-]?\d)/g,
+      '$1$2$3',
+    )
+    .replace(/(?<![\d-])(?<!\d[ \u00a0-])(\d{3,4})[ \u00a0-](\d{3,4})(?![ \u00a0-]?\d)/g, '$1$2');
 }
 
 const keyword =
@@ -86,7 +122,7 @@ function tier(text: string, index: number, code: string): 1 | 2 | 3 | null {
 function extractCode(message: MailMessage): string | null {
   const body = messageText(message);
   if (sensitive.test(`${message.subject ?? ''} ${body.slice(0, 250)}`)) return null;
-  const text = `${message.subject ?? ''}\n${body}`;
+  const text = joinGroups(`${message.subject ?? ''}\n${body}`);
   const best = new Map<string, number>();
   for (const match of text.matchAll(/(?<![a-z0-9])([A-Z0-9]{4,8})(?![a-z0-9])/gi)) {
     const code = match[1];
@@ -99,17 +135,69 @@ function extractCode(message: MailMessage): string | null {
   return codes.length === 1 ? (codes[0] ?? null) : null;
 }
 
+const signInSubject =
+  /sign[- ]?in|log[- ]?in|magic link|verify (?:your )?(?:email|account|address)|confirm (?:your )?(?:email|account|address)/i;
+const signInLabel = /^\s*(?:sign[- ]?in|log[- ]?in|verify|confirm|continue)\b/i;
+
+// A sign-in link is offered only when the message carries no code, the subject reads like a
+// sign-in request, and exactly one HTTPS link is labelled as the sign-in action. Bare IPs and
+// punycode hosts are refused because they are the usual shape of look-alike phishing links.
+function extractLink(message: MailMessage): string | null {
+  if (!message.html || !signInSubject.test(message.subject ?? '')) return null;
+  const urls = new Set<string>();
+  for (const anchor of parseHtml(message.html).anchors) {
+    if (!signInLabel.test(anchor.label)) continue;
+    let url: URL;
+    try {
+      url = new URL(anchor.href);
+    } catch {
+      continue;
+    }
+    if (
+      url.protocol !== 'https:' ||
+      url.username ||
+      url.password ||
+      /^\d+(?:\.\d+){3}$/.test(url.hostname) ||
+      url.hostname.split('.').some((label) => label.startsWith('xn--')) ||
+      url.href.length > 2048
+    )
+      continue;
+    urls.add(url.href);
+  }
+  return urls.size === 1 ? ([...urls][0] ?? null) : null;
+}
+
 export const freshWindowMs = 180_000;
+
+function registrableDomain(host: string): string {
+  const labels = host.toLowerCase().split('.');
+  const second = labels.at(-2) ?? '';
+  const take = labels.length > 2 && second.length <= 3 && (labels.at(-1)?.length ?? 0) <= 2 ? 3 : 2;
+  return labels.slice(-take).join('.');
+}
+
+// True when the sender's domain and the website share a registrable domain, e.g.
+// noreply@tm.openai.com and https://auth.openai.com. A hint, not a proof of legitimacy.
+export function senderMatchesSite(sender: string, origin: string): boolean {
+  const domain = sender.split('@')[1];
+  if (!domain) return false;
+  try {
+    return registrableDomain(domain) === registrableDomain(new URL(origin).hostname);
+  } catch {
+    return false;
+  }
+}
 
 export function freshCandidates(
   messages: MailMessage[],
   inbox: Inbox,
   consumed: Set<string>,
   now: number,
+  checks: ReadonlyMap<string, SenderCheck> = new Map(),
 ): Candidate[] {
-  // Resends of one code collapse into the newest message. Consuming any copy must retire the
-  // whole group, so consumption is tracked per code rather than per message.
-  const byCode = new Map<string, { candidate: Candidate; consumed: boolean }>();
+  // Resends of one code or link collapse into the newest message. Consuming any copy must retire
+  // the whole group, so consumption is tracked per value rather than per message.
+  const byValue = new Map<string, { candidate: Candidate; consumed: boolean }>();
   for (const message of messages) {
     const receivedAt = Date.parse(message.received_at);
     if (
@@ -121,23 +209,30 @@ export function freshCandidates(
     const sender = senderAddress(message.from);
     if (!sender || !message.to.some((value) => value.toLowerCase() === inbox.email_address))
       continue;
-    const code = extractCode(message);
-    if (!code) continue;
-    const candidate: Candidate = {
+    const base = {
       messageId: message.id,
-      code,
       sender,
       subject: (message.subject ?? '(No subject)').slice(0, 200),
       receivedAt,
-    };
-    const group = byCode.get(code);
-    if (!group) byCode.set(code, { candidate, consumed: consumed.has(message.id) });
+      check: checks.get(message.id) ?? 'unknown',
+    } as const;
+    const code = extractCode(message);
+    const url = code ? null : extractLink(message);
+    const candidate: Candidate | null = code
+      ? { ...base, kind: 'code', code }
+      : url
+        ? { ...base, kind: 'link', url }
+        : null;
+    if (!candidate) continue;
+    const value = candidate.kind === 'code' ? `code:${candidate.code}` : `link:${candidate.url}`;
+    const group = byValue.get(value);
+    if (!group) byValue.set(value, { candidate, consumed: consumed.has(message.id) });
     else {
       group.consumed ||= consumed.has(message.id);
       if (group.candidate.receivedAt < receivedAt) group.candidate = candidate;
     }
   }
-  return [...byCode.values()]
+  return [...byValue.values()]
     .filter((group) => !group.consumed)
     .map((group) => group.candidate)
     .sort((a, b) => b.receivedAt - a.receivedAt)

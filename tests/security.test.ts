@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { validateCallback } from '../src/background/auth';
 import { isTrustedSender } from '../src/background/controller';
-import { freshCandidates, senderAddress } from '../src/core/matching';
+import { freshCandidates, senderAddress, senderMatchesSite } from '../src/core/matching';
 import { commandSchema, inboxSchema, messageSchema } from '../src/core/model';
 
 const now = Date.parse('2026-10-25T12:00:00Z');
@@ -67,7 +67,7 @@ describe('mailbox-to-website boundary', () => {
           html: '<p>Your login code</p><table><tr><td style="font-size:32px">735 918</td></tr></table><p>Code expires at 09:30</p><footer>Example Inc. 2026</footer>',
         }),
       ]),
-    ).toBeNull();
+    ).toMatchObject({ code: '735918' });
     expect(
       first([
         email({
@@ -77,6 +77,69 @@ describe('mailbox-to-website boundary', () => {
         }),
       ]),
     ).toMatchObject({ code: '735918' });
+  });
+
+  it('joins grouped and quoted codes but not phone numbers or account numbers', () => {
+    const cases: [string, string | null][] = [
+      ['Your code is "521992".', '521992'],
+      ['Your code: 4821-7730', '48217730'],
+      ['Enter 12 34 56 as your code.', '123456'],
+      ['Your code is 735 918. Call 555 123 4567 for help.', '735918'],
+      ['Your code: 123 456 789', null],
+      ['Verification code: 88 44', null],
+    ];
+    for (const [text, code] of cases)
+      expect(first([email({ subject: null, text })]), text).toEqual(
+        code ? expect.objectContaining({ code }) : null,
+      );
+  });
+
+  it('offers a sign-in link only when it is the single labelled HTTPS action', () => {
+    const link = (subject: string | null, html: string) =>
+      first([email({ subject, text: null, html })]);
+    const page =
+      '<p>Click below.</p><a href="https://example.com/login?token=abcdefgh12345678">Sign in to Example</a><a href="https://example.com/help">Help</a>';
+    expect(link('Sign in to Example', page)).toMatchObject({
+      kind: 'link',
+      url: 'https://example.com/login?token=abcdefgh12345678',
+    });
+    expect(link('Your weekly digest', page)).toBeNull();
+    expect(link('Sign in to Example', '<a href="http://example.com/login">Sign in</a>')).toBeNull();
+    expect(
+      link('Sign in to Example', '<a href="https://93.184.216.34/login">Sign in</a>'),
+    ).toBeNull();
+    expect(
+      link('Sign in to Example', '<a href="https://xn--exmple-cua.com/login">Sign in</a>'),
+    ).toBeNull();
+    expect(
+      link(
+        'Sign in to Example',
+        '<a href="https://example.com/a">Sign in</a><a href="https://evil.test/b">Log in</a>',
+      ),
+    ).toBeNull();
+    expect(
+      link(
+        'Sign in to Example',
+        '<p>Your code is 123456</p><a href="https://example.com/a">Sign in</a>',
+      ),
+    ).toMatchObject({ kind: 'code', code: '123456' });
+  });
+
+  it('matches senders to the website by registrable domain', () => {
+    expect(senderMatchesSite('noreply@tm.openai.com', 'https://auth.openai.com')).toBe(true);
+    expect(senderMatchesSite('noreply@openai.com', 'https://chatgpt.com')).toBe(false);
+    expect(senderMatchesSite('no-reply@mail.example.co.uk', 'https://www.example.co.uk')).toBe(
+      true,
+    );
+    expect(senderMatchesSite('x@example.co.uk', 'https://evil.co.uk')).toBe(false);
+    expect(senderMatchesSite('x@openai.com.evil.test', 'https://auth.openai.com')).toBe(false);
+  });
+
+  it('carries the sender check through and defaults it to unknown', () => {
+    expect(first([email()])).toMatchObject({ check: 'unknown' });
+    expect(
+      freshCandidates([email()], inbox, none, now, new Map([[email().id, 'fail']]))[0],
+    ).toMatchObject({ check: 'fail' });
   });
 
   it('rejects wrong recipients, unparseable senders, stale mail and outbound mail', () => {

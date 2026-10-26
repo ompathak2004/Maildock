@@ -10,19 +10,19 @@ The chosen website receives only the code you explicitly approve for filling. Ma
 
 ## Browser storage
 
-| Data                                                                                                    | Location                                           | Retention                                                                                                   |
-| ------------------------------------------------------------------------------------------------------- | -------------------------------------------------- | ----------------------------------------------------------------------------------------------------------- |
-| Public OAuth client ID, selected inbox ID, up to 100 remembered origin/sender pairs from reviewed fills | Extension local storage                            | Until extension data is cleared or it is uninstalled                                                        |
-| Access and refresh tokens                                                                               | Trusted extension session storage                  | Until successful disconnect, invalid authorization, browser restart, extension reload/disable, or uninstall |
-| Inbox list, consumed message IDs, poll timing, last fill origin                                         | Trusted extension session storage                  | During the browser session; inbox list cleared on successful disconnect                                     |
-| Fresh candidate codes with subject/sender (at most five)                                                | Trusted extension session storage and panel memory | Three minutes after receipt at most; removed on fill, discard, expiry processing, or disconnection          |
-| Full message bodies                                                                                     | Worker memory while fetching and matching          | Not deliberately persisted or logged                                                                        |
+| Data                                                                                                    | Location                                           | Retention                                                                                                          |
+| ------------------------------------------------------------------------------------------------------- | -------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------ |
+| Public OAuth client ID, selected inbox ID, up to 100 remembered origin/sender pairs from reviewed fills | Extension local storage                            | Until extension data is cleared or it is uninstalled                                                               |
+| Access and refresh tokens                                                                               | Trusted extension session storage                  | Until successful disconnect, invalid authorization, browser restart, extension reload/disable, or uninstall        |
+| Inbox list, consumed message IDs, poll timing, last fill origin                                         | Trusted extension session storage                  | During the browser session; inbox list cleared on successful disconnect                                            |
+| Fresh candidate codes or sign-in links with subject/sender and authentication verdict (at most five)    | Trusted extension session storage and panel memory | Three minutes after receipt at most; removed on fill, copy is not tracked, discard, open, expiry, or disconnection |
+| Full message bodies                                                                                     | Worker memory while fetching and matching          | Not deliberately persisted or logged                                                                               |
 
 Session storage is not an encrypted password vault. Credentials remain accessible to trusted code in this extension. The design does not protect against a compromised device, browser, or extension update. Browser/OS memory handling is outside Maildock's control.
 
 Stale codes are cleared when the worker next processes the expiry alarm or another command; a suspended browser can delay cleanup. The worker never fills a code older than three minutes. Removing a code from extension state does not remove the provider's email or a code already entered into a website.
 
-No data is placed in Chrome sync, the clipboard, telemetry, or application console logs. Local preferences reveal the sites and senders you configured; they remain after disconnect so you can reconnect. Uninstalling the extension removes its local preferences.
+No data is placed in Chrome sync, telemetry, or application console logs. The clipboard receives a code only when you press **Copy code**; clear it yourself if your clipboard manager keeps history. Per-site permissions you grant with **Always allow** are stored by Chrome, shown under _Allowed websites_, and removed from there. Local preferences reveal the sites and senders you configured; they remain after disconnect so you can reconnect. Uninstalling the extension removes its local preferences.
 
 ## Disconnect and revocation
 
@@ -35,6 +35,7 @@ Closing the browser or uninstalling clears local credentials but cannot guarante
 - `identity`: Resend OAuth through Chrome's authorization flow.
 - `storage`: Local preferences and session credentials.
 - `activeTab` and `scripting`: Inspect and fill the tab explicitly granted by a toolbar click.
+- `optional_host_permissions` (`https://*/*`): Declared so you can allow individual websites from the panel. Nothing is granted at install, and Maildock never asks for all sites.
 - `sidePanel`: Keep the verification workflow beside the website.
 - `alarms`: Expire stale codes.
 - Host permission for `https://api.resend.com/*`: Direct provider requests.

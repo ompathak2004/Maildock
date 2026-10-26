@@ -60,17 +60,26 @@ export const authSchema = z.object({
 });
 export type AuthSession = z.infer<typeof authSchema>;
 
-const candidateSchema = z.object({
+// Results computed by Resend's receiving server, so a sender cannot forge them. `unknown` means
+// Maildock could not fetch them; it never blocks on its own.
+const senderCheckSchema = z.enum(['pass', 'gray', 'fail', 'unknown']);
+export type SenderCheck = z.infer<typeof senderCheckSchema>;
+
+const candidateBase = z.object({
   messageId,
-  code: z.string().regex(/^[A-Za-z0-9]{4,8}$/),
   sender: emailAddress,
   subject: z.string().max(200),
   receivedAt: z.number(),
+  check: senderCheckSchema,
 });
+const candidateSchema = z.discriminatedUnion('kind', [
+  candidateBase.extend({ kind: z.literal('code'), code: z.string().regex(/^[A-Za-z0-9]{4,8}$/) }),
+  candidateBase.extend({ kind: z.literal('link'), url: z.url({ protocol: /^https$/ }) }),
+]);
 export type Candidate = z.infer<typeof candidateSchema>;
 
 export const watchSchema = z.object({
-  codes: z.array(candidateSchema).max(5),
+  items: z.array(candidateSchema).max(5),
   consumed: z.array(messageId).max(200),
   checkedAt: z.number(),
   nextPollAt: z.number(),
@@ -92,6 +101,7 @@ export const commandSchema = z.discriminatedUnion('type', [
   }),
   z.strictObject({ type: z.literal('watch.poll') }),
   z.strictObject({ type: z.literal('watch.fill'), messageId, target: targetSchema }),
+  z.strictObject({ type: z.literal('watch.open'), messageId }),
   z.strictObject({ type: z.literal('watch.dismiss'), messageId }),
   z.strictObject({ type: z.literal('watch.done') }),
 ]);
