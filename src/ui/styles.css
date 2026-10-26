@@ -320,54 +320,6 @@ footer a:hover {
   padding-top: 20px;
   margin-top: 20px;
 }
-.site {
-  background: var(--soft);
-  border-radius: 4px;
-  padding: 12px;
-  margin-bottom: 20px;
-}
-.site strong,
-.site span {
-  display: block;
-  overflow: hidden;
-  white-space: nowrap;
-  text-overflow: ellipsis;
-}
-.site strong {
-  font-size: 12px;
-}
-.site span {
-  font-size: 10px;
-  color: var(--muted);
-  margin-top: 3px;
-}
-.watch-form {
-  margin-top: 18px;
-}
-.watch-form > input {
-  margin-top: 8px;
-}
-.length-row {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 15px;
-  margin: 18px 0;
-}
-.length-row select {
-  width: auto;
-  font-size: 11px;
-  padding: 7px 10px;
-}
-.instruction {
-  padding: 8px 0 20px;
-  font-size: 11px;
-  color: var(--muted);
-}
-.instruction strong {
-  color: var(--ink);
-  font-weight: 500;
-}
 .watch-card h2,
 .result-card h2,
 .complete h2 {
@@ -385,6 +337,7 @@ footer a:hover {
   display: flex;
   justify-content: space-between;
   align-items: center;
+  gap: 12px;
   margin-top: 18px;
   color: var(--muted);
   font-size: 11px;
@@ -400,7 +353,56 @@ footer a:hover {
   letter-spacing: 5px;
   font-weight: 500;
   text-align: center;
-  user-select: none;
+  user-select: all;
+}
+.link-display {
+  display: block;
+  padding: 18px 12px;
+  margin: 22px 0;
+  background: var(--soft);
+  border-radius: 4px;
+  font-family: "SFMono-Regular", Consolas, monospace;
+  font-size: 15px;
+  text-align: center;
+  overflow-wrap: anywhere;
+}
+.check {
+  display: inline-block;
+  margin-left: 6px;
+  padding: 1px 6px;
+  border: 1px solid var(--border);
+  border-radius: 3px;
+  font-size: 10px;
+  color: var(--muted);
+  white-space: nowrap;
+}
+.check-ok {
+  color: var(--ink);
+  border-color: var(--ink);
+}
+.check-bad {
+  color: var(--ink);
+  border-style: dashed;
+  text-decoration: line-through;
+}
+.result-card .primary + .secondary,
+.complete .secondary + .secondary,
+.complete .fine-print + .secondary {
+  margin-top: 10px;
+}
+.site-list {
+  list-style: none;
+  margin: 12px 0 0;
+  padding: 0;
+  display: grid;
+  gap: 8px;
+  font-size: 12px;
+}
+.site-list li {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
 }
 .message-details {
   display: grid;
@@ -420,11 +422,6 @@ footer a:hover {
 .message-details dd {
   margin: 0;
   overflow-wrap: anywhere;
-}
-.route {
-  padding: 20px 0;
-  margin-top: 20px;
-  border-bottom: 1px solid var(--border);
 }
 .centered {
   display: block;

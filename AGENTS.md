@@ -35,4 +35,4 @@ Browser tests exercise the built extension with intercepted Resend responses. Th
 
 ## Scope
 
-Resend first. Gmail, automatic submission, magic links, cross-frame filling, persistent credentials, and a webhook relay are separate changes. Never claim live account verification or a security audit unless performed.
+Resend first. Gmail, automatic submission, cross-frame filling, persistent credentials, and a webhook relay are separate changes. Sign-in links open only from an explicit click in the panel. Never claim live account verification or a security audit unless performed.

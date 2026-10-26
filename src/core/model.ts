@@ -37,7 +37,6 @@ export type Target = z.infer<typeof targetSchema>;
 const ruleSchema = z.object({
   origin: z.url(),
   sender: emailAddress,
-  codeLength: z.number().int().min(4).max(8),
 });
 export const settingsSchema = z.object({
   schemaVersion: z.literal(1),
@@ -61,34 +60,33 @@ export const authSchema = z.object({
 });
 export type AuthSession = z.infer<typeof authSchema>;
 
-const candidateSchema = z.object({
+// Results computed by Resend's receiving server, so a sender cannot forge them. `unknown` means
+// Maildock could not fetch them; it never blocks on its own.
+const senderCheckSchema = z.enum(['pass', 'gray', 'fail', 'unknown']);
+export type SenderCheck = z.infer<typeof senderCheckSchema>;
+
+const candidateBase = z.object({
   messageId,
-  code: z.string().regex(/^[A-Za-z0-9]{4,8}$/),
   sender: emailAddress,
   subject: z.string().max(200),
   receivedAt: z.number(),
+  check: senderCheckSchema,
 });
+const candidateSchema = z.discriminatedUnion('kind', [
+  candidateBase.extend({ kind: z.literal('code'), code: z.string().regex(/^[A-Za-z0-9]{4,8}$/) }),
+  candidateBase.extend({ kind: z.literal('link'), url: z.url({ protocol: /^https$/ }) }),
+]);
 export type Candidate = z.infer<typeof candidateSchema>;
 
-const attemptBase = {
-  id: z.uuid(),
-  target: targetSchema,
-  inbox: inboxSchema,
-  sender: emailAddress,
-  codeLength: z.number().int().min(4).max(8),
-  startedAt: z.number(),
-  expiresAt: z.number(),
-  baseline: z.array(messageId).max(2000),
+export const watchSchema = z.object({
+  items: z.array(candidateSchema).max(5),
+  consumed: z.array(messageId).max(200),
   checkedAt: z.number(),
   nextPollAt: z.number(),
-};
-export const attemptSchema = z.discriminatedUnion('phase', [
-  z.object({ ...attemptBase, phase: z.literal('watching'), note: z.string().nullable() }),
-  z.object({ ...attemptBase, phase: z.literal('ready'), candidate: candidateSchema }),
-  z.object({ ...attemptBase, phase: z.literal('filled') }),
-  z.object({ ...attemptBase, phase: z.literal('stopped'), reason: z.string() }),
-]);
-export type Attempt = z.infer<typeof attemptSchema>;
+  note: z.string().nullable(),
+  lastFill: z.object({ origin: z.url(), at: z.number() }).nullable(),
+});
+export type Watch = z.infer<typeof watchSchema>;
 
 export const commandSchema = z.discriminatedUnion('type', [
   z.strictObject({ type: z.literal('state.get') }),
@@ -101,43 +99,24 @@ export const commandSchema = z.discriminatedUnion('type', [
     email: emailAddress,
     name: z.string().trim().min(1).max(64),
   }),
-  z.strictObject({ type: z.literal('target.get') }),
-  z.strictObject({
-    type: z.literal('watch.start'),
-    inboxId,
-    target: targetSchema,
-    sender: emailAddress,
-    codeLength: z.number().int().min(4).max(8),
-  }),
-  z.strictObject({ type: z.literal('watch.poll'), attemptId: z.uuid() }),
-  z.strictObject({ type: z.literal('watch.stop') }),
-  z.strictObject({
-    type: z.literal('watch.fill'),
-    attemptId: z.uuid(),
-    messageId,
-    reviewedSender: z.literal(true),
-  }),
+  z.strictObject({ type: z.literal('watch.poll') }),
+  z.strictObject({ type: z.literal('watch.fill'), messageId, target: targetSchema }),
+  z.strictObject({ type: z.literal('watch.open'), messageId }),
+  z.strictObject({ type: z.literal('watch.dismiss'), messageId }),
+  z.strictObject({ type: z.literal('watch.done') }),
 ]);
 export type Command = z.infer<typeof commandSchema>;
 
-export type ViewState = {
-  connected: boolean;
-  inboxes: Inbox[];
-  settings: Omit<Settings, 'clientId'>;
-  attempt: Attempt | null;
-};
+const viewSchema = z.object({
+  connected: z.boolean(),
+  inboxes: z.array(inboxSchema),
+  settings: settingsSchema.omit({ clientId: true }),
+  watch: watchSchema,
+});
+export type ViewState = z.infer<typeof viewSchema>;
 
 export const responseSchema = z.discriminatedUnion('ok', [
-  z.object({
-    ok: z.literal(true),
-    state: z.object({
-      connected: z.boolean(),
-      inboxes: z.array(inboxSchema),
-      settings: settingsSchema.omit({ clientId: true }),
-      attempt: attemptSchema.nullable(),
-    }),
-    target: targetSchema.nullable(),
-  }),
+  z.object({ ok: z.literal(true), state: viewSchema, target: targetSchema.nullable() }),
   z.object({ ok: z.literal(false), error: z.string(), code: z.string() }),
 ]);
 export type Response = z.infer<typeof responseSchema>;

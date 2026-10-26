@@ -24,22 +24,19 @@ export async function captureTarget(): Promise<Target> {
   } catch {
     throw new AppError(
       'page-access',
-      'Open an HTTPS login page, then click Maildock in the browser toolbar to grant access to that tab.',
+      'Open the page with the code field, then click the Maildock toolbar icon to allow filling on that tab.',
     );
   }
 }
 
-export async function assertTarget(target: Target): Promise<void> {
+async function assertTarget(target: Target): Promise<void> {
   const current = await captureTarget();
   if (
     current.tabId !== target.tabId ||
     current.documentId !== target.documentId ||
     current.origin !== target.origin
   ) {
-    throw new AppError(
-      'page-changed',
-      'The login tab changed. Start a new watch and request a fresh code.',
-    );
+    throw new AppError('page-changed', 'The page changed. Check the website shown and try again.');
   }
 }
 

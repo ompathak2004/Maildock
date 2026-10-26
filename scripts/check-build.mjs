@@ -9,7 +9,7 @@ assert.deepEqual(manifest.host_permissions, ['https://api.resend.com/*']);
 assert.equal(manifest.content_scripts, undefined);
 assert.equal(manifest.externally_connectable, undefined);
 assert.equal(manifest.web_accessible_resources, undefined);
-assert.equal(manifest.optional_host_permissions, undefined);
+assert.deepEqual(manifest.optional_host_permissions, ['https://*/*']);
 assert.deepEqual(
   [...manifest.permissions].sort(),
   ['activeTab', 'alarms', 'identity', 'scripting', 'sidePanel', 'storage'].sort(),

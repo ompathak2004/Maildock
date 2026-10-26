@@ -1,14 +1,14 @@
 import { z } from 'zod';
 import {
-  type Attempt,
   type AuthSession,
-  attemptSchema,
   authSchema,
   defaultSettings,
   type Inbox,
   inboxSchema,
   type Settings,
   settingsSchema,
+  type Watch,
+  watchSchema,
 } from '../core/model';
 
 export async function initializeStorage(): Promise<void> {
@@ -39,15 +39,15 @@ export async function saveAuth(auth: AuthSession | null): Promise<void> {
   else await chrome.storage.session.remove('auth');
 }
 
-export async function getAttempt(): Promise<Attempt | null> {
-  const stored = await chrome.storage.session.get('attempt');
-  const parsed = attemptSchema.safeParse(stored.attempt);
+export async function getWatch(): Promise<Watch | null> {
+  const stored = await chrome.storage.session.get('watch');
+  const parsed = watchSchema.safeParse(stored.watch);
   return parsed.success ? parsed.data : null;
 }
 
-export async function saveAttempt(attempt: Attempt | null): Promise<void> {
-  if (attempt) await chrome.storage.session.set({ attempt: attemptSchema.parse(attempt) });
-  else await chrome.storage.session.remove('attempt');
+export async function saveWatch(watch: Watch | null): Promise<void> {
+  if (watch) await chrome.storage.session.set({ watch: watchSchema.parse(watch) });
+  else await chrome.storage.session.remove('watch');
 }
 
 export async function getInboxes(): Promise<Inbox[]> {

@@ -1,6 +1,13 @@
 import { z } from 'zod';
 import { AppError } from '../core/errors';
-import { type Inbox, inboxSchema, type MailMessage, messageSchema, threadId } from '../core/model';
+import {
+  type Inbox,
+  inboxSchema,
+  type MailMessage,
+  messageSchema,
+  type SenderCheck,
+  threadId,
+} from '../core/model';
 import { accessToken } from './auth';
 import { requestJson } from './http';
 import { saveAuth } from './storage';
@@ -51,6 +58,32 @@ export async function createInbox(email: string, name: string): Promise<void> {
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ email_address: email, name }),
   });
+}
+
+// Resend computes SPF, DKIM, and DMARC on its receiving server. `pass` needs DMARC or DKIM to
+// pass for the From domain; an explicit DMARC failure, or SPF and DKIM both failing, is `fail`.
+// Any transport or schema problem yields `unknown`, which the UI shows but never treats as proof.
+// Lost authorization and rate limits propagate so the poll loop backs off instead of hammering.
+export async function senderCheck(messageId: string): Promise<SenderCheck> {
+  const result = z.enum(['pass', 'fail', 'gray', 'processing_failed', 'unknown']).catch('unknown');
+  const schema = z.object({
+    authentication: z.object({ spf: result, dkim: result, dmarc: result }).nullable(),
+  });
+  try {
+    const { authentication } = await api(`/emails/receiving/${messageId}`, schema);
+    if (!authentication) return 'unknown';
+    if (authentication.dmarc === 'pass' || authentication.dkim === 'pass') return 'pass';
+    if (
+      authentication.dmarc === 'fail' ||
+      (authentication.dkim === 'fail' && authentication.spf === 'fail')
+    )
+      return 'fail';
+    return 'gray';
+  } catch (error) {
+    if (error instanceof AppError && ['unauthorized', 'rate-limit'].includes(error.code))
+      throw error;
+    return 'unknown';
+  }
 }
 
 export async function recentMessages(inbox: Inbox, since: number): Promise<MailMessage[]> {
