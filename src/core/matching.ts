@@ -79,15 +79,18 @@ function messageText(message: MailMessage): string {
 }
 
 // Codes are often typeset in groups ("735 918", "4821-7730") that the token scan would treat as
-// separate numbers. Groups are joined only when nothing digit-like follows, so phone numbers and
-// longer account numbers keep their shape.
+// separate numbers. Groups are joined only when no further digits sit on either side, however
+// much horizontal space separates them, so phone numbers and account numbers keep their shape.
 function joinGroups(text: string): string {
   return text
     .replace(
-      /(?<![\d-])(?<!\d[ \u00a0-])(\d{2})[ \u00a0](\d{2})[ \u00a0](\d{2})(?![ \u00a0-]?\d)/g,
+      /(?<![\d-])(?<!\d[ \u00a0\t-]*)(\d{2})[ \u00a0](\d{2})[ \u00a0](\d{2})(?![ \u00a0\t-]*\d)/g,
       '$1$2$3',
     )
-    .replace(/(?<![\d-])(?<!\d[ \u00a0-])(\d{3,4})[ \u00a0-](\d{3,4})(?![ \u00a0-]?\d)/g, '$1$2');
+    .replace(
+      /(?<![\d-])(?<!\d[ \u00a0\t-]*)(\d{3,4})[ \u00a0-](\d{3,4})(?![ \u00a0\t-]*\d)/g,
+      '$1$2',
+    );
 }
 
 const keyword =
@@ -119,9 +122,14 @@ function tier(text: string, index: number, code: string): 1 | 2 | 3 | null {
   return 3;
 }
 
+// Recovery and payment messages are never candidates, whether they carry a code or a link.
+function sensitiveMessage(message: MailMessage, body: string): boolean {
+  return sensitive.test(`${message.subject ?? ''} ${body.slice(0, 250)}`);
+}
+
 function extractCode(message: MailMessage): string | null {
   const body = messageText(message);
-  if (sensitive.test(`${message.subject ?? ''} ${body.slice(0, 250)}`)) return null;
+  if (sensitiveMessage(message, body)) return null;
   const text = joinGroups(`${message.subject ?? ''}\n${body}`);
   const best = new Map<string, number>();
   for (const match of text.matchAll(/(?<![a-z0-9])([A-Z0-9]{4,8})(?![a-z0-9])/gi)) {
@@ -144,8 +152,10 @@ const signInLabel = /^\s*(?:sign[- ]?in|log[- ]?in|verify|confirm|continue)\b/i;
 // punycode hosts are refused because they are the usual shape of look-alike phishing links.
 function extractLink(message: MailMessage): string | null {
   if (!message.html || !signInSubject.test(message.subject ?? '')) return null;
+  const { text, anchors } = parseHtml(message.html);
+  if (sensitiveMessage(message, text)) return null;
   const urls = new Set<string>();
-  for (const anchor of parseHtml(message.html).anchors) {
+  for (const anchor of anchors) {
     if (!signInLabel.test(anchor.label)) continue;
     let url: URL;
     try {
@@ -169,8 +179,50 @@ function extractLink(message: MailMessage): string | null {
 
 export const freshWindowMs = 180_000;
 
+// Hosting suffixes under which unrelated parties own sibling subdomains (the private section of
+// the Public Suffix List). Two senders on such a suffix are not the same organisation.
+const sharedSuffixes = [
+  'github.io',
+  'gitlab.io',
+  'vercel.app',
+  'netlify.app',
+  'pages.dev',
+  'workers.dev',
+  'web.app',
+  'firebaseapp.com',
+  'appspot.com',
+  'herokuapp.com',
+  'onrender.com',
+  'fly.dev',
+  'azurewebsites.net',
+  'cloudfront.net',
+  'amazonaws.com',
+  'ngrok.io',
+  'ngrok.app',
+  'ngrok-free.app',
+  'repl.co',
+  'replit.app',
+  'glitch.me',
+  'surge.sh',
+  'myshopify.com',
+  'wixsite.com',
+  'squarespace.com',
+  'webflow.io',
+  'blogspot.com',
+  'wordpress.com',
+  'weebly.com',
+  'bubbleapps.io',
+  'lovable.app',
+  'netlify.com',
+];
+
 function registrableDomain(host: string): string {
   const labels = host.toLowerCase().split('.');
+  const shared = sharedSuffixes.find(
+    (suffix) =>
+      host.toLowerCase().endsWith(`.${suffix}`) && labels.length > suffix.split('.').length,
+  );
+  if (shared) return labels.slice(-(shared.split('.').length + 1)).join('.');
   const second = labels.at(-2) ?? '';
   const take = labels.length > 2 && second.length <= 3 && (labels.at(-1)?.length ?? 0) <= 2 ? 3 : 2;
   return labels.slice(-take).join('.');

@@ -67,12 +67,17 @@ async function poll(force = false): Promise<Watch> {
   if (!inbox || (!force && now < watch.nextPollAt)) return watch;
   try {
     const messages = await recentMessages(inbox, now - freshWindowMs);
+    // Each message is checked once, in parallel, so an unavailable check costs one request and
+    // at most one timeout rather than one per poll.
     const checks = new Map(watch.items.map((value) => [value.messageId, value.check]));
     const consumed = new Set(watch.consumed);
-    for (const item of freshCandidates(messages, inbox, consumed, Date.now(), checks)) {
-      if (!checks.has(item.messageId) || item.check === 'unknown')
-        checks.set(item.messageId, await senderCheck(item.messageId));
-    }
+    const unchecked = freshCandidates(messages, inbox, consumed, Date.now(), checks).filter(
+      (item) => !checks.has(item.messageId),
+    );
+    const results = await Promise.all(
+      unchecked.map(async (item) => [item.messageId, await senderCheck(item.messageId)] as const),
+    );
+    for (const [messageId, check] of results) checks.set(messageId, check);
     const next: Watch = {
       ...watch,
       items: freshCandidates(messages, inbox, consumed, Date.now(), checks),

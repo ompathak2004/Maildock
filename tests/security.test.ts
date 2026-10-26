@@ -86,6 +86,8 @@ describe('mailbox-to-website boundary', () => {
       ['Enter 12 34 56 as your code.', '123456'],
       ['Your code is 735 918. Call 555 123 4567 for help.', '735918'],
       ['Your code: 123 456 789', null],
+      ['Your sign-in request for account 123 456  789', null],
+      ['Your sign-in request for account 123 456 \t 789', null],
       ['Verification code: 88 44', null],
     ];
     for (const [text, code] of cases)
@@ -104,6 +106,18 @@ describe('mailbox-to-website boundary', () => {
       url: 'https://example.com/login?token=abcdefgh12345678',
     });
     expect(link('Your weekly digest', page)).toBeNull();
+    expect(
+      link(
+        'Verify your email to reset your password',
+        '<a href="https://example.com/reset?token=abcdefgh12345678">Continue</a>',
+      ),
+    ).toBeNull();
+    expect(
+      link(
+        'Sign in to Example',
+        '<p>Use this link for account recovery.</p><a href="https://example.com/r?t=abcdefgh12345678">Continue</a>',
+      ),
+    ).toBeNull();
     expect(link('Sign in to Example', '<a href="http://example.com/login">Sign in</a>')).toBeNull();
     expect(
       link('Sign in to Example', '<a href="https://93.184.216.34/login">Sign in</a>'),
@@ -133,6 +147,9 @@ describe('mailbox-to-website boundary', () => {
     );
     expect(senderMatchesSite('x@example.co.uk', 'https://evil.co.uk')).toBe(false);
     expect(senderMatchesSite('x@openai.com.evil.test', 'https://auth.openai.com')).toBe(false);
+    expect(senderMatchesSite('x@attacker.github.io', 'https://victim.github.io')).toBe(false);
+    expect(senderMatchesSite('x@mail.victim.vercel.app', 'https://victim.vercel.app')).toBe(true);
+    expect(senderMatchesSite('x@github.io', 'https://github.io')).toBe(true);
   });
 
   it('carries the sender check through and defaults it to unknown', () => {

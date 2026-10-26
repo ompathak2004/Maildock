@@ -63,6 +63,7 @@ export async function createInbox(email: string, name: string): Promise<void> {
 // Resend computes SPF, DKIM, and DMARC on its receiving server. `pass` needs DMARC or DKIM to
 // pass for the From domain; an explicit DMARC failure, or SPF and DKIM both failing, is `fail`.
 // Any transport or schema problem yields `unknown`, which the UI shows but never treats as proof.
+// Lost authorization and rate limits propagate so the poll loop backs off instead of hammering.
 export async function senderCheck(messageId: string): Promise<SenderCheck> {
   const result = z.enum(['pass', 'fail', 'gray', 'processing_failed', 'unknown']).catch('unknown');
   const schema = z.object({
@@ -79,7 +80,8 @@ export async function senderCheck(messageId: string): Promise<SenderCheck> {
       return 'fail';
     return 'gray';
   } catch (error) {
-    if (error instanceof AppError && error.code === 'unauthorized') throw error;
+    if (error instanceof AppError && ['unauthorized', 'rate-limit'].includes(error.code))
+      throw error;
     return 'unknown';
   }
 }
