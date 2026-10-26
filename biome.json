@@ -1,0 +1,22 @@
+{
+  "$schema": "https://biomejs.dev/schemas/2.6.3/schema.json",
+  "files": {
+    "ignoreUnknown": true,
+    "includes": [
+      "**",
+      "!!.wxt",
+      "!!.output",
+      "!!node_modules",
+      "!!artifacts",
+      "!!test-results",
+      "!!package-lock.json"
+    ]
+  },
+  "formatter": { "indentStyle": "space", "indentWidth": 2, "lineWidth": 100 },
+  "javascript": { "formatter": { "quoteStyle": "single" } },
+  "linter": { "rules": { "preset": "recommended", "suspicious": { "noExplicitAny": "error" } } },
+  "assist": { "actions": { "source": { "organizeImports": "on" } } },
+  "overrides": [
+    { "includes": ["src/**"], "linter": { "rules": { "suspicious": { "noConsole": "error" } } } }
+  ]
+}
