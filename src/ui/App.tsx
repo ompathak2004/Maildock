@@ -4,13 +4,15 @@ import { type Command, emailAddress, inboxId, type Target, type ViewState } from
 import { send } from './bridge';
 import { ParticleWordmark } from './ParticleWordmark';
 
+const allowHint =
+  'Open the page with the code field, then click the Maildock toolbar icon to allow filling on that tab.';
+
 export function App() {
   const [view, setView] = useState<ViewState | null>(null);
   const [target, setTarget] = useState<Target | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [accepted, setAccepted] = useState(false);
-  const [reviewedMessageId, setReviewedMessageId] = useState<string | null>(null);
   const [creating, setCreating] = useState(false);
   const [newEmail, setNewEmail] = useState('');
   const [newName, setNewName] = useState('');
@@ -23,7 +25,7 @@ export function App() {
     try {
       const result = await send(command);
       setView(result.state);
-      if (result.target) setTarget(result.target);
+      if (command.type === 'state.get' || command.type === 'watch.poll') setTarget(result.target);
       if (command.type === 'auth.disconnect') {
         setTarget(null);
         setAccepted(false);
@@ -36,7 +38,10 @@ export function App() {
     } catch (error) {
       setError(publicError(error).error);
       const current = await send({ type: 'state.get' }).catch(() => null);
-      if (current) setView(current.state);
+      if (current) {
+        setView(current.state);
+        setTarget(current.target);
+      }
     } finally {
       setBusy(null);
     }
@@ -45,21 +50,19 @@ export function App() {
   useEffect(() => {
     void run({ type: 'state.get' });
   }, [run]);
-  const attempt = view?.attempt;
-  const attemptId = attempt?.id;
-  const phase = attempt?.phase;
-  const candidateId = attempt?.phase === 'ready' ? attempt.candidate.messageId : null;
-  const reviewed = candidateId !== null && reviewedMessageId === candidateId;
+  const connected = view?.connected ?? false;
+  const watch = view?.watch;
 
   useEffect(() => {
-    if (!attemptId || (phase !== 'watching' && phase !== 'ready') || busy) return;
+    if (!connected || busy) return;
     const timer = window.setInterval(() => {
       setNow(Date.now());
       if (polling.current) return;
       polling.current = true;
-      void send({ type: 'watch.poll', attemptId })
+      void send({ type: 'watch.poll' })
         .then((result) => {
           setView(result.state);
+          setTarget(result.target);
         })
         .catch((error: unknown) => {
           setError(publicError(error).error);
@@ -69,22 +72,14 @@ export function App() {
         });
     }, 3000);
     return () => window.clearInterval(timer);
-  }, [attemptId, phase, busy]);
+  }, [connected, busy]);
 
   const selected =
     view?.inboxes.find((value) => value.id === view.settings.selectedInboxId) ?? view?.inboxes[0];
-  const active = phase === 'watching' || phase === 'ready';
   const disabled = !!busy;
+  const host = target ? new URL(target.origin).host : null;
   const knownSender = view?.settings.rules.find((value) => value.origin === target?.origin)?.sender;
-
-  function start(event: FormEvent) {
-    event.preventDefault();
-    if (!selected || !target) {
-      setError('Select an inbox and the login tab before watching.');
-      return;
-    }
-    void run({ type: 'watch.start', inboxId: selected.id, target });
-  }
+  const seconds = (at: number) => Math.max(0, Math.round((now - at) / 1000));
 
   function create(event: FormEvent) {
     event.preventDefault();
@@ -185,7 +180,7 @@ export function App() {
             <div className="page-heading">
               <p className="eyebrow">Verification</p>
               <h1>Your inbox, in reach.</h1>
-              <p>Choose an inbox. Watch for a code. Fill when ready.</p>
+              <p>Request a code on the website. It appears here. Fill it with one click.</p>
             </div>
             <section className="card">
               <div className="section-heading">
@@ -193,7 +188,7 @@ export function App() {
                 <button
                   type="button"
                   className="text-button"
-                  disabled={disabled || active}
+                  disabled={disabled}
                   onClick={() => void run({ type: 'inbox.list' })}
                 >
                   {busy === 'inbox.list' ? 'Refreshing…' : 'Refresh'}
@@ -207,7 +202,7 @@ export function App() {
                   <select
                     id="inbox"
                     value={selected?.id ?? ''}
-                    disabled={disabled || active}
+                    disabled={disabled}
                     onChange={(event) =>
                       void run({ type: 'inbox.select', inboxId: inboxId.parse(event.target.value) })
                     }
@@ -234,7 +229,7 @@ export function App() {
               <button
                 type="button"
                 className="text-button create-link"
-                disabled={disabled || active}
+                disabled={disabled}
                 onClick={() => setCreating(!creating)}
               >
                 {creating ? 'Cancel' : 'Create an inbox'}
@@ -270,202 +265,110 @@ export function App() {
                 </form>
               )}
             </section>
-            {!active && (
-              <section className="card">
-                <div className="section-heading">
-                  <h2>The website</h2>
-                  <button
-                    type="button"
-                    className="text-button"
-                    disabled={disabled}
-                    onClick={() => void run({ type: 'target.get' })}
-                  >
-                    {busy === 'target.get'
-                      ? 'Checking…'
-                      : target
-                        ? 'Change tab'
-                        : 'Use current tab'}
-                  </button>
-                </div>
-                {target ? (
-                  <div className="site">
-                    <div>
-                      <strong>{new URL(target.origin).host}</strong>
-                      <span>{target.title || 'Your active tab'}</span>
-                    </div>
-                  </div>
-                ) : (
-                  <p className="field-hint">
-                    Open the login page and click Maildock in your browser toolbar. Then select “Use
-                    current tab”.
-                  </p>
-                )}
-                <form onSubmit={start} className="watch-form">
-                  {target && (
-                    <p className="field-hint">
-                      {knownSender
-                        ? `Codes for this website came from ${knownSender} before.`
-                        : 'Maildock finds the sender and code length from the email itself.'}
-                    </p>
-                  )}
-                  <div className="instruction">
-                    <p>
-                      Start watching here.
-                      <br />
-                      <strong>Then request a new code on the website.</strong>
-                    </p>
-                  </div>
-                  <button
-                    type="submit"
-                    className="primary"
-                    disabled={disabled || !selected || !target}
-                  >
-                    {busy === 'watch.start' ? 'Preparing inbox…' : 'Start watching'}
-                  </button>
-                </form>
-              </section>
-            )}
-            {attempt?.phase === 'watching' && (
-              <section className="card watch-card" aria-live="polite">
-                <p className="eyebrow">Watching for a new email</p>
-                <h2>Now request your code.</h2>
-                <p>
-                  {attempt.knownSender ? (
-                    <>
-                      Expecting <strong>{attempt.knownSender}</strong>
-                    </>
-                  ) : (
-                    'Waiting for a new verification email'
-                  )}
-                </p>
-                <dl className="message-details route">
-                  <div>
-                    <dt>Inbox</dt>
-                    <dd>{attempt.inbox.email_address}</dd>
-                  </div>
-                  <div>
-                    <dt>Website</dt>
-                    <dd>{new URL(attempt.target.origin).host}</dd>
-                  </div>
-                </dl>
-                {attempt.note && <p className="notice">{attempt.note}</p>}
-                <div className="watch-bottom">
-                  <span>{Math.max(0, Math.ceil((attempt.expiresAt - now) / 1000))}s remaining</span>
-                  <button
-                    type="button"
-                    className="text-button"
-                    disabled={disabled}
-                    onClick={() => void run({ type: 'watch.stop' })}
-                  >
-                    Stop watching
-                  </button>
-                </div>
-                <p className="fine-print">
-                  Keep this panel open. Navigating to a new page ends this watch.
-                </p>
-              </section>
-            )}
-            {attempt?.phase === 'ready' && (
-              <section className="card result-card" aria-live="polite">
-                <p className="eyebrow">Code received</p>
-                <h2>Ready when you are.</h2>
-                <output
-                  className="code-display"
-                  aria-label={`Verification code ${attempt.candidate.code}`}
-                >
-                  {attempt.candidate.code}
-                </output>
-                <dl className="message-details">
-                  <div>
-                    <dt>From</dt>
-                    <dd>{attempt.candidate.sender}</dd>
-                  </div>
-                  <div>
-                    <dt>Sender</dt>
-                    <dd>
-                      {attempt.knownSender === null
-                        ? 'First code for this website. Check the address.'
-                        : attempt.knownSender === attempt.candidate.sender
-                          ? 'Same sender as your last fill here.'
-                          : `Differs from ${attempt.knownSender}, which you used here before.`}
-                    </dd>
-                  </div>
-                  <div>
-                    <dt>Subject</dt>
-                    <dd>{attempt.candidate.subject}</dd>
-                  </div>
-                  <div>
-                    <dt>Fill on</dt>
-                    <dd>{new URL(attempt.target.origin).host}</dd>
-                  </div>
-                </dl>
-                <div className="permission-note">
-                  <strong>Review before filling</strong>
-                  <p>
-                    Resend does not expose sender authentication in this Inbox response. Matching
-                    the address alone does not prove who sent the email.
-                  </p>
-                </div>
-                <label className="checkbox">
-                  <input
-                    type="checkbox"
-                    checked={reviewed}
-                    onChange={(event) =>
-                      setReviewedMessageId(event.target.checked ? candidateId : null)
-                    }
-                  />
-                  <span>I requested this code for this website and reviewed the sender.</span>
-                </label>
-                <button
-                  type="button"
-                  className="primary"
-                  disabled={disabled || !reviewed}
-                  onClick={() =>
-                    void run({
-                      type: 'watch.fill',
-                      attemptId: attempt.id,
-                      messageId: attempt.candidate.messageId,
-                      reviewedSender: true,
-                    })
-                  }
-                >
-                  {busy === 'watch.fill' ? 'Checking and filling…' : 'Fill code'}
-                </button>
-                <p className="fine-print">
-                  Maildock never clicks Submit. Some websites submit when a field is filled.
-                </p>
-                <button
-                  type="button"
-                  className="text-button centered"
-                  disabled={disabled}
-                  onClick={() => void run({ type: 'watch.stop' })}
-                >
-                  Discard code
-                </button>
-              </section>
-            )}
-            {attempt?.phase === 'filled' && (
+            {watch?.lastFill && (
               <section className="card complete" role="status">
                 <h2>You’re ready to continue.</h2>
                 <p>
-                  The code was filled on {new URL(attempt.target.origin).host}. Maildock has cleared
+                  The code was filled on {new URL(watch.lastFill.origin).host}. Maildock has cleared
                   its copy.
                 </p>
                 <button
                   type="button"
                   className="secondary"
                   disabled={disabled}
-                  onClick={() => void run({ type: 'watch.stop' })}
+                  onClick={() => void run({ type: 'watch.done' })}
                 >
                   Done
                 </button>
               </section>
             )}
-            {attempt?.phase === 'stopped' && (
-              <section className="notice" role="status">
-                {attempt.reason}
+            {selected && watch && watch.codes.length === 0 && (
+              <section className="card watch-card" aria-live="polite">
+                <p className="eyebrow">Watching your inbox</p>
+                <h2>Request your code on the website.</h2>
+                <p>New verification emails to {selected.email_address} appear here.</p>
+                {watch.note && <p className="notice">{watch.note}</p>}
+                <div className="watch-bottom">
+                  <span>
+                    {watch.checkedAt ? `Checked ${seconds(watch.checkedAt)}s ago` : 'Checking…'}
+                  </span>
+                  <span>{host ? `Ready to fill on ${host}` : 'No tab allowed yet'}</span>
+                </div>
+                {!host && <p className="fine-print">{allowHint}</p>}
               </section>
             )}
+            {watch?.codes.map((candidate, index) => (
+              <section
+                key={candidate.messageId}
+                className="card result-card"
+                aria-live={index === 0 ? 'polite' : undefined}
+              >
+                <p className="eyebrow">
+                  {index === 0 ? 'Code received' : 'Earlier code'} · {seconds(candidate.receivedAt)}
+                  s ago
+                </p>
+                <output className="code-display" aria-label={`Verification code ${candidate.code}`}>
+                  {candidate.code}
+                </output>
+                <dl className="message-details">
+                  <div>
+                    <dt>From</dt>
+                    <dd>{candidate.sender}</dd>
+                  </div>
+                  <div>
+                    <dt>Subject</dt>
+                    <dd>{candidate.subject}</dd>
+                  </div>
+                  <div>
+                    <dt>Fill on</dt>
+                    <dd>{host ?? 'No tab allowed yet'}</dd>
+                  </div>
+                  {host && (
+                    <div>
+                      <dt>Sender</dt>
+                      <dd>
+                        {!knownSender
+                          ? `First code for ${host}. Check the address.`
+                          : knownSender === candidate.sender
+                            ? 'Same sender as your last fill here.'
+                            : `Differs from ${knownSender}, which you used here before.`}
+                      </dd>
+                    </div>
+                  )}
+                </dl>
+                {watch.note && <p className="notice">{watch.note}</p>}
+                <button
+                  type="button"
+                  className="primary"
+                  disabled={disabled || !target}
+                  onClick={() =>
+                    target &&
+                    void run({ type: 'watch.fill', messageId: candidate.messageId, target })
+                  }
+                >
+                  {busy === 'watch.fill'
+                    ? 'Checking and filling…'
+                    : host
+                      ? `Fill ${candidate.code} on ${host}`
+                      : 'Fill code'}
+                </button>
+                <p className="fine-print">
+                  {host
+                    ? 'Filling is your confirmation that you requested this code for this website. Maildock never clicks Submit.'
+                    : allowHint}
+                </p>
+                <button
+                  type="button"
+                  className="text-button centered"
+                  disabled={disabled}
+                  onClick={() =>
+                    void run({ type: 'watch.dismiss', messageId: candidate.messageId })
+                  }
+                >
+                  Discard code
+                </button>
+              </section>
+            ))}
             <div className="connection-row">
               <span>Resend connected</span>
               <button

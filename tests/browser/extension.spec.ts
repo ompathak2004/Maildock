@@ -165,7 +165,7 @@ test.afterEach(async () => {
   await context?.close();
 });
 
-test('connects, reads fresh mail, fills the selected tab after review, and revokes access', async () => {
+test('connects, lists fresh mail, fills the allowed tab on request, and revokes access', async () => {
   await mkdir('artifacts', { recursive: true });
   await panel.screenshot({ path: 'artifacts/welcome.png', fullPage: true });
   await panel.getByLabel('I understand the account access').check();
@@ -184,44 +184,31 @@ test('connects, reads fresh mail, fills the selected tab after review, and revok
   ]);
   expect(refreshed.every((result) => result.ok)).toBe(true);
   expect(refreshes).toBe(1);
-  await grantTab();
-  const target = await command({ type: 'target.get' });
-  expect(target, JSON.stringify(target)).toMatchObject({ ok: true });
-  if (!target.ok || !target.target) throw new Error('Target capture failed');
-  const connected = await command({ type: 'inbox.list' });
-  if (!connected.ok || !connected.state.inboxes[0]) throw new Error('Inbox discovery failed');
-  const started = await command({
-    type: 'watch.start',
-    target: target.target,
-    inboxId: connected.state.inboxes[0].id,
+  await expect(panel.getByText('Request your code on the website.')).toBeVisible();
+  deliveredAt = new Date(Date.now() - 2000).toISOString();
+  await expect(panel.getByRole('button', { name: 'Fill code', exact: true })).toBeDisabled({
+    timeout: 10_000,
   });
-  if (!started.ok || !started.state.attempt) throw new Error('Watch start failed');
-  deliveredAt = new Date(Date.now() + 100).toISOString();
-  await expect
-    .poll(async () => {
-      const response = await command({
-        type: 'watch.poll',
-        attemptId: started.state.attempt?.id ?? '',
-      });
-      return response.ok ? response.state.attempt?.phase : response.error;
-    })
-    .toBe('ready');
-  const ready = await command({ type: 'state.get' });
-  if (!ready.ok || ready.state.attempt?.phase !== 'ready') throw new Error('Code not ready');
-  await panel.reload();
-  await expect(panel.getByRole('button', { name: 'Fill code', exact: true })).toBeDisabled();
+  await expect(panel.getByText('123456', { exact: true })).toBeVisible();
   await panel.screenshot({ path: 'artifacts/code-ready.png', fullPage: true });
+  await grantTab();
+  const polled = await command({ type: 'watch.poll' });
+  if (!polled.ok || !polled.target) throw new Error('Target capture failed');
+  expect(polled.target.origin).toBe('https://login.example.test');
+  const code = polled.state.watch.codes[0];
+  if (!code) throw new Error('Code not listed');
   await expect(website.locator('#otp')).toHaveValue('');
-  await website.bringToFront();
   const filled = await command({
     type: 'watch.fill',
-    attemptId: ready.state.attempt.id,
-    messageId: ready.state.attempt.candidate.messageId,
-    reviewedSender: true,
+    messageId: code.messageId,
+    target: polled.target,
   });
   expect(filled.ok).toBe(true);
   await expect(website.locator('#otp')).toHaveValue('123456');
   await expect(website.locator('body')).not.toHaveAttribute('data-submitted', 'true');
+  const again = await command({ type: 'watch.poll' });
+  expect(again.ok && again.state.watch.codes).toEqual([]);
+  expect(again.ok && again.state.watch.lastFill?.origin).toBe('https://login.example.test');
   const storage = await worker.evaluate(async () => ({
     local: await chrome.storage.local.get(null),
     session: await chrome.storage.session.get(null),
@@ -230,7 +217,7 @@ test('connects, reads fresh mail, fills the selected tab after review, and revok
   expect(JSON.stringify(storage.local)).not.toContain('rotated-access-token');
   expect(JSON.stringify(storage.local)).not.toContain('refresh-token');
   expect(JSON.stringify(storage.local)).not.toContain('123456');
-  expect(JSON.stringify(storage.session.attempt)).not.toContain('123456');
+  expect(JSON.stringify(storage.session.watch)).not.toContain('123456');
   expect(storage.local.settings).toMatchObject({
     rules: [{ origin: 'https://login.example.test', sender: 'accounts@example.com' }],
   });
@@ -242,21 +229,37 @@ test('connects, reads fresh mail, fills the selected tab after review, and revok
   ).toBeUndefined();
 });
 
-test('blocks tab changes and does not expose a general mailbox bridge to websites', async () => {
+test('rejects a stale page, survives navigation, and does not expose a mailbox bridge to websites', async () => {
   const connected = await command({ type: 'auth.connect' });
   expect(connected.ok).toBe(true);
   await grantTab();
-  const target = await command({ type: 'target.get' });
-  if (!target.ok || !target.target || !connected.ok || !connected.state.inboxes[0])
-    throw new Error('Setup failed');
+  const before = await command({ type: 'watch.poll' });
+  if (!before.ok || !before.target) throw new Error('Setup failed');
+  deliveredAt = new Date(Date.now() - 2000).toISOString();
   await website.goto('https://login.example.test/new-document');
-  await grantTab();
-  const result = await command({
-    type: 'watch.start',
-    target: target.target,
-    inboxId: connected.state.inboxes[0].id,
+  await website.bringToFront();
+  await expect
+    .poll(async () => {
+      const response = await command({ type: 'watch.poll' });
+      return response.ok ? response.state.watch.codes.length : response.error;
+    })
+    .toBe(1);
+  const after = await command({ type: 'watch.poll' });
+  if (!after.ok || !after.target || !after.state.watch.codes[0]) throw new Error('Poll failed');
+  expect(after.target.documentId).not.toBe(before.target.documentId);
+  const stale = await command({
+    type: 'watch.fill',
+    messageId: after.state.watch.codes[0].messageId,
+    target: before.target,
   });
-  expect(result).toMatchObject({ ok: false, code: 'page-changed' });
+  expect(stale).toMatchObject({ ok: false, code: 'page-changed' });
   await expect(website.locator('#otp')).toHaveValue('');
+  const fresh = await command({
+    type: 'watch.fill',
+    messageId: after.state.watch.codes[0].messageId,
+    target: after.target,
+  });
+  expect(fresh.ok).toBe(true);
+  await expect(website.locator('#otp')).toHaveValue('123456');
   expect(await website.evaluate(() => typeof chrome.runtime?.sendMessage)).toBe('undefined');
 });

@@ -1,32 +1,18 @@
 import { describe, expect, it } from 'vitest';
 import { validateCallback } from '../src/background/auth';
 import { isTrustedSender } from '../src/background/controller';
-import { selectCandidate, senderAddress } from '../src/core/matching';
-import { attemptSchema, commandSchema, messageSchema } from '../src/core/model';
+import { freshCandidates, senderAddress } from '../src/core/matching';
+import { commandSchema, inboxSchema, messageSchema } from '../src/core/model';
 
 const now = Date.parse('2026-10-25T12:00:00Z');
-const attempt = attemptSchema.parse({
-  id: 'ec80a649-a05b-4dfe-bf48-d7c78c134a47',
-  phase: 'watching',
-  target: {
-    tabId: 4,
-    documentId: 'original-document',
-    origin: 'https://example.com',
-    title: 'Example',
-  },
-  inbox: {
-    id: '00eac4f6-401a-4429-84cf-c086cab6b68f',
-    email_address: 'work@inbox.test',
-    name: 'Work',
-  },
-  knownSender: null,
-  startedAt: now - 10_000,
-  expiresAt: now + 120_000,
-  baseline: [],
-  checkedAt: now,
-  nextPollAt: now,
-  note: null,
+const inbox = inboxSchema.parse({
+  id: '00eac4f6-401a-4429-84cf-c086cab6b68f',
+  email_address: 'work@inbox.test',
+  name: 'Work',
 });
+const none = new Set<string>();
+const first = (messages: ReturnType<typeof email>[], consumed = none) =>
+  freshCandidates(messages, inbox, consumed, now)[0] ?? null;
 
 function email(overrides: Record<string, unknown> = {}) {
   return messageSchema.parse({
@@ -44,21 +30,17 @@ function email(overrides: Record<string, unknown> = {}) {
 
 describe('mailbox-to-website boundary', () => {
   it('offers a fresh matching code and parses HTML without executing or fetching it', () => {
-    expect(selectCandidate([email()], attempt, now)).toMatchObject({ code: '123456' });
-    expect(selectCandidate([email({ text: 'Your code is Ab12cD' })], attempt, now)).toMatchObject({
+    expect(first([email()])).toMatchObject({ code: '123456' });
+    expect(first([email({ text: 'Your code is Ab12cD' })])).toMatchObject({
       code: 'Ab12cD',
     });
     expect(
-      selectCandidate(
-        [
-          email({
-            text: null,
-            html: '<style>.x{color:#123456}</style><p>Your verification code: <b>654321</b></p><img src="https://evil.test/track">',
-          }),
-        ],
-        attempt,
-        now,
-      ),
+      first([
+        email({
+          text: null,
+          html: '<style>.x{color:#123456}</style><p>Your verification code: <b>654321</b></p><img src="https://evil.test/track">',
+        }),
+      ]),
     ).toMatchObject({ code: '654321' });
   });
 
@@ -74,92 +56,65 @@ describe('mailbox-to-website boundary', () => {
       ['Your code is G-123456.\nSupport:\n80012345', '123456'],
     ];
     for (const [text, code] of cases)
-      expect(selectCandidate([email({ subject: null, text })], attempt, now), text).toEqual(
+      expect(first([email({ subject: null, text })]), text).toEqual(
         code ? expect.objectContaining({ code }) : null,
       );
     expect(
-      selectCandidate(
-        [
-          email({
-            subject: null,
-            text: null,
-            html: '<p>Your login code</p><table><tr><td style="font-size:32px">735 918</td></tr></table><p>Code expires at 09:30</p><footer>Example Inc. 2026</footer>',
-          }),
-        ],
-        attempt,
-        now,
-      ),
+      first([
+        email({
+          subject: null,
+          text: null,
+          html: '<p>Your login code</p><table><tr><td style="font-size:32px">735 918</td></tr></table><p>Code expires at 09:30</p><footer>Example Inc. 2026</footer>',
+        }),
+      ]),
     ).toBeNull();
     expect(
-      selectCandidate(
-        [
-          email({
-            subject: null,
-            text: null,
-            html: '<p>Your login code</p><table><tr><td style="font-size:32px">735918</td></tr></table><p>It expires at 09:30</p><footer>Example Inc. 2026</footer>',
-          }),
-        ],
-        attempt,
-        now,
-      ),
+      first([
+        email({
+          subject: null,
+          text: null,
+          html: '<p>Your login code</p><table><tr><td style="font-size:32px">735918</td></tr></table><p>It expires at 09:30</p><footer>Example Inc. 2026</footer>',
+        }),
+      ]),
     ).toMatchObject({ code: '735918' });
   });
 
-  it('rejects wrong recipients, unparseable senders, stale mail, outbound mail and expired attempts', () => {
+  it('rejects wrong recipients, unparseable senders, stale mail and outbound mail', () => {
     for (const change of [
       { to: ['someone-else@inbox.test'] },
       { from: 'not an address' },
-      { received_at: new Date(now - 60_000).toISOString() },
+      { received_at: new Date(now - 200_000).toISOString() },
+      { received_at: new Date(now + 60_000).toISOString() },
       { direction: 'outbound' },
     ])
-      expect(selectCandidate([email(change)], attempt, now)).toBeNull();
-    expect(selectCandidate([email()], attempt, attempt.expiresAt)).toBeNull();
+      expect(first([email(change)])).toBeNull();
     expect(senderAddress('"accounts@example.com" <attacker@evil.test>')).toBe('attacker@evil.test');
-    expect(
-      selectCandidate(
-        [email({ from: '"accounts@example.com" <attacker@evil.test>' })],
-        attempt,
-        now,
-      ),
-    ).toMatchObject({ sender: 'attacker@evil.test' });
+    expect(first([email({ from: '"accounts@example.com" <attacker@evil.test>' })])).toMatchObject({
+      sender: 'attacker@evil.test',
+    });
   });
 
-  it('uses the remembered sender only to break ties between competing fresh codes', () => {
-    const known = { ...attempt, knownSender: 'accounts@example.com' as const };
-    const other = email({
+  it('lists fresh codes newest first, collapses resends, and never revives a consumed message', () => {
+    const resend = email({
       id: 'b1353064-588e-4e55-9c86-2da7d0fb72c8',
+      received_at: new Date(now - 1000).toISOString(),
+    });
+    const other = email({
+      id: 'c2a7f3a1-4d4e-4a1b-9c3e-7f1d2b3c4d5e',
       from: 'Other <noreply@other.test>',
       text: 'Your code is 654321',
+      received_at: new Date(now - 3000).toISOString(),
     });
-    expect(selectCandidate([email(), other], attempt, now)).toBe('ambiguous');
-    expect(selectCandidate([email(), other], known, now)).toMatchObject({
-      code: '123456',
-      sender: 'accounts@example.com',
-    });
-    expect(selectCandidate([other], known, now)).toMatchObject({ sender: 'noreply@other.test' });
-  });
-
-  it('does not reuse baseline messages or pick between competing fresh codes', () => {
-    const first = email();
-    expect(selectCandidate([first], { ...attempt, baseline: [first.id] }, now)).toBeNull();
-    expect(
-      selectCandidate(
-        [first, email({ id: 'b1353064-588e-4e55-9c86-2da7d0fb72c8', text: 'Your code is 654321' })],
-        attempt,
-        now,
-      ),
-    ).toBe('ambiguous');
+    expect(freshCandidates([email(), other, resend], inbox, none, now)).toMatchObject([
+      { code: '123456', messageId: resend.id },
+      { code: '654321', sender: 'noreply@other.test' },
+    ]);
+    expect(first([email()], new Set([email().id]))).toBeNull();
   });
 
   it('refuses recovery emails and messages containing multiple equally likely codes', () => {
-    expect(selectCandidate([email({ subject: 'Password reset code' })], attempt, now)).toBeNull();
-    expect(
-      selectCandidate(
-        [email({ text: 'Your code is 123456. Your second code is 654321.' })],
-        attempt,
-        now,
-      ),
-    ).toBeNull();
+    expect(first([email({ subject: 'Password reset code' })])).toBeNull();
+    expect(first([email({ text: 'Your code is 123456. Your second code is 654321.' })])).toBeNull();
   });
 });
 
@@ -180,7 +135,7 @@ describe('extension authorization boundary', () => {
     expect(commandSchema.safeParse({ type: 'fetch', url: 'https://evil.test' }).success).toBe(
       false,
     );
-    expect(commandSchema.safeParse({ type: 'watch.fill', attemptId: attempt.id }).success).toBe(
+    expect(commandSchema.safeParse({ type: 'watch.fill', messageId: email().id }).success).toBe(
       false,
     );
   });

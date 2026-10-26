@@ -320,39 +320,6 @@ footer a:hover {
   padding-top: 20px;
   margin-top: 20px;
 }
-.site {
-  background: var(--soft);
-  border-radius: 4px;
-  padding: 12px;
-  margin-bottom: 20px;
-}
-.site strong,
-.site span {
-  display: block;
-  overflow: hidden;
-  white-space: nowrap;
-  text-overflow: ellipsis;
-}
-.site strong {
-  font-size: 12px;
-}
-.site span {
-  font-size: 10px;
-  color: var(--muted);
-  margin-top: 3px;
-}
-.watch-form {
-  margin-top: 18px;
-}
-.instruction {
-  padding: 8px 0 20px;
-  font-size: 11px;
-  color: var(--muted);
-}
-.instruction strong {
-  color: var(--ink);
-  font-weight: 500;
-}
 .watch-card h2,
 .result-card h2,
 .complete h2 {
@@ -370,6 +337,7 @@ footer a:hover {
   display: flex;
   justify-content: space-between;
   align-items: center;
+  gap: 12px;
   margin-top: 18px;
   color: var(--muted);
   font-size: 11px;
@@ -405,11 +373,6 @@ footer a:hover {
 .message-details dd {
   margin: 0;
   overflow-wrap: anywhere;
-}
-.route {
-  padding: 20px 0;
-  margin-top: 20px;
-  border-bottom: 1px solid var(--border);
 }
 .centered {
   display: block;

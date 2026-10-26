@@ -1,74 +1,92 @@
 import { AppError, publicError } from '../core/errors';
-import { selectCandidate } from '../core/matching';
+import { freshCandidates, freshWindowMs } from '../core/matching';
 import {
-  type Attempt,
   type Command,
   commandSchema,
+  type Inbox,
   type Response,
+  type Target,
   type ViewState,
+  type Watch,
 } from '../core/model';
 import { connect, disconnect } from './auth';
-import { assertTarget, captureTarget, fillTarget } from './page';
+import { captureTarget, fillTarget } from './page';
 import { createInbox, listInboxes, recentMessages } from './resend';
 import {
-  getAttempt,
   getAuth,
   getInboxes,
   getSettings,
-  saveAttempt,
+  getWatch,
   saveInboxes,
   saveSettings,
+  saveWatch,
 } from './storage';
 
-function stopped(attempt: Attempt, reason: string): Attempt {
-  return { ...attempt, phase: 'stopped', baseline: [], reason };
+const idleWatch: Watch = {
+  codes: [],
+  consumed: [],
+  checkedAt: 0,
+  nextPollAt: 0,
+  note: null,
+  lastFill: null,
+};
+
+async function selectedInbox(): Promise<Inbox | null> {
+  const [inboxes, settings] = await Promise.all([getInboxes(), getSettings()]);
+  return inboxes.find((value) => value.id === settings.selectedInboxId) ?? inboxes[0] ?? null;
 }
 
+// Codes leave session storage as soon as they fall out of the fresh window, even while the
+// panel is closed, because the half-minute alarm calls this.
 export async function state(): Promise<ViewState> {
-  const [auth, inboxes, settings] = await Promise.all([getAuth(), getInboxes(), getSettings()]);
-  let attempt = await getAttempt();
-  if (
-    attempt &&
-    ['watching', 'ready'].includes(attempt.phase) &&
-    (!auth || Date.now() >= attempt.expiresAt)
-  ) {
-    await saveAttempt(
-      stopped(
-        attempt,
-        auth
-          ? 'This watch expired. Start again and request a fresh code.'
-          : 'Reconnect your Resend account to continue.',
-      ),
-    );
-    attempt = await getAttempt();
+  const [auth, inboxes, settings, stored] = await Promise.all([
+    getAuth(),
+    getInboxes(),
+    getSettings(),
+    getWatch(),
+  ]);
+  const now = Date.now();
+  let watch = auth ? (stored ?? idleWatch) : idleWatch;
+  const codes = watch.codes.filter((value) => value.receivedAt >= now - freshWindowMs);
+  if (codes.length !== watch.codes.length || (!auth && stored)) {
+    watch = { ...watch, codes };
+    await saveWatch(auth ? watch : null);
   }
   const { clientId: _, ...preferences } = settings;
-  return { connected: !!auth, inboxes: auth ? inboxes : [], settings: preferences, attempt };
+  return { connected: !!auth, inboxes: auth ? inboxes : [], settings: preferences, watch };
 }
 
-async function start(command: Extract<Command, { type: 'watch.start' }>): Promise<void> {
-  const inbox = (await getInboxes()).find((value) => value.id === command.inboxId);
-  if (!inbox) throw new AppError('no-inbox', 'Refresh your inbox list and select an inbox.');
-  const target = command.target;
-  await assertTarget(target);
-  const recent = await recentMessages(inbox, Date.now() - 180_000);
-  await assertTarget(target);
+async function poll(force = false): Promise<Watch> {
+  const watch = (await state()).watch;
+  const inbox = await selectedInbox();
   const now = Date.now();
-  const settings = await getSettings();
-  await saveSettings({ ...settings, selectedInboxId: inbox.id });
-  await saveAttempt({
-    id: crypto.randomUUID(),
-    phase: 'watching',
-    target,
-    inbox,
-    knownSender: settings.rules.find((value) => value.origin === target.origin)?.sender ?? null,
-    startedAt: now,
-    expiresAt: now + 180_000,
-    baseline: recent.map((value) => value.id),
-    checkedAt: now,
-    nextPollAt: now + 3000,
-    note: null,
-  });
+  if (!inbox || (!force && now < watch.nextPollAt)) return watch;
+  try {
+    const messages = await recentMessages(inbox, now - freshWindowMs);
+    const next: Watch = {
+      ...watch,
+      codes: freshCandidates(messages, inbox, new Set(watch.consumed), Date.now()),
+      checkedAt: now,
+      nextPollAt: now + 3000,
+      note: null,
+    };
+    await saveWatch(next);
+    return next;
+  } catch (error) {
+    if (
+      error instanceof AppError &&
+      ['network', 'rate-limit', 'provider', 'response'].includes(error.code)
+    ) {
+      const next: Watch = {
+        ...watch,
+        nextPollAt: now + Math.max(5000, error.retryAfterMs),
+        note: error.message,
+      };
+      await saveWatch(next);
+      return next;
+    }
+    throw error;
+  }
 }
 
 async function rememberSender(origin: string, sender: string): Promise<void> {
@@ -81,64 +99,41 @@ async function rememberSender(origin: string, sender: string): Promise<void> {
   });
 }
 
-async function poll(attemptId: string, force = false): Promise<Attempt | null> {
-  const attempt = (await state()).attempt;
-  if (!attempt || attempt.id !== attemptId || !['watching', 'ready'].includes(attempt.phase))
-    return attempt;
-  if (!force && Date.now() < attempt.nextPollAt) return attempt;
-  try {
-    await assertTarget(attempt.target);
-    const messages = await recentMessages(attempt.inbox, attempt.startedAt);
-    const now = Date.now();
-    await assertTarget(attempt.target);
-    if (now >= attempt.expiresAt) {
-      await saveAttempt(stopped(attempt, 'This watch expired. Request a fresh code.'));
-      return getAttempt();
-    }
-    const candidate = selectCandidate(messages, attempt, now);
-    const next = { ...attempt, checkedAt: now, nextPollAt: now + 3000 };
-    if (candidate && candidate !== 'ambiguous')
-      await saveAttempt({ ...next, phase: 'ready', candidate });
-    else
-      await saveAttempt({
-        ...next,
-        phase: 'watching',
-        note:
-          candidate === 'ambiguous'
-            ? 'Multiple different codes arrived. Stop this watch and request a fresh code.'
-            : null,
-      });
-  } catch (error) {
-    if (
-      error instanceof AppError &&
-      ['network', 'rate-limit', 'provider', 'response'].includes(error.code)
-    ) {
-      await saveAttempt({
-        ...attempt,
-        phase: 'watching',
-        nextPollAt: Date.now() + Math.max(5000, error.retryAfterMs),
-        note: error.message,
-      });
-    } else {
-      await saveAttempt(stopped(attempt, publicError(error).error));
-      throw error;
-    }
-  }
-  return getAttempt();
+async function fill(command: Extract<Command, { type: 'watch.fill' }>): Promise<void> {
+  const target = await captureTarget();
+  if (
+    target.tabId !== command.target.tabId ||
+    target.documentId !== command.target.documentId ||
+    target.origin !== command.target.origin
+  )
+    throw new AppError('page-changed', 'The page changed. Check the website shown and try again.');
+  const watch = await poll(true);
+  const candidate = watch.codes.find((value) => value.messageId === command.messageId);
+  if (!candidate)
+    throw new AppError('no-code', 'That code is no longer available. Review the current codes.');
+  await fillTarget(target, candidate.code);
+  await saveWatch({
+    ...watch,
+    codes: watch.codes.filter((value) => value.messageId !== candidate.messageId),
+    consumed: [...watch.consumed, candidate.messageId].slice(-200),
+    lastFill: { origin: target.origin, at: Date.now() },
+  });
+  await rememberSender(target.origin, candidate.sender);
 }
 
 async function execute(command: Command): Promise<Response> {
-  let target = null;
+  let target: Target | null = null;
   switch (command.type) {
     case 'state.get':
+      target = await captureTarget().catch(() => null);
       break;
     case 'auth.connect':
-      await saveAttempt(null);
+      await saveWatch(null);
       await connect();
       await saveInboxes(await listInboxes());
       break;
     case 'auth.disconnect':
-      await saveAttempt(null);
+      await saveWatch(null);
       await disconnect();
       await saveInboxes([]);
       break;
@@ -148,7 +143,7 @@ async function execute(command: Command): Promise<Response> {
     case 'inbox.select': {
       if (!(await getInboxes()).some((value) => value.id === command.inboxId))
         throw new AppError('no-inbox', 'That inbox is no longer available. Refresh the list.');
-      await saveAttempt(null);
+      await saveWatch(null);
       await saveSettings({ ...(await getSettings()), selectedInboxId: command.inboxId });
       break;
     }
@@ -156,49 +151,25 @@ async function execute(command: Command): Promise<Response> {
       await createInbox(command.email, command.name);
       await saveInboxes(await listInboxes());
       break;
-    case 'target.get':
-      target = await captureTarget();
-      break;
-    case 'watch.start':
-      await start(command);
-      break;
     case 'watch.poll':
-      await poll(command.attemptId);
+      await poll();
+      target = await captureTarget().catch(() => null);
       break;
-    case 'watch.stop':
-      await saveAttempt(null);
+    case 'watch.fill':
+      await fill(command);
       break;
-    case 'watch.fill': {
-      const original = await getAttempt();
-      if (
-        !original ||
-        original.id !== command.attemptId ||
-        original.phase !== 'ready' ||
-        original.candidate.messageId !== command.messageId
-      )
-        throw new AppError('no-code', 'There is no current code to fill.');
-      const verified = await poll(command.attemptId, true);
-      if (
-        !verified ||
-        verified.id !== original.id ||
-        verified.phase !== 'ready' ||
-        verified.candidate.messageId !== original.candidate.messageId ||
-        verified.candidate.code !== original.candidate.code
-      )
-        throw new AppError(
-          'code-changed',
-          'The matching message changed. Review the current result before filling.',
-        );
-      await saveAttempt({ ...verified, phase: 'filled', baseline: [] });
-      await rememberSender(verified.target.origin, verified.candidate.sender);
-      try {
-        await fillTarget(verified.target, verified.candidate.code);
-      } catch (error) {
-        await saveAttempt(stopped(verified, publicError(error).error));
-        throw error;
-      }
+    case 'watch.dismiss': {
+      const watch = (await state()).watch;
+      await saveWatch({
+        ...watch,
+        codes: watch.codes.filter((value) => value.messageId !== command.messageId),
+        consumed: [...watch.consumed, command.messageId].slice(-200),
+      });
       break;
     }
+    case 'watch.done':
+      await saveWatch({ ...(await state()).watch, lastFill: null });
+      break;
   }
   return { ok: true, state: await state(), target };
 }

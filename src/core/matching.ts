@@ -1,5 +1,5 @@
 import { Parser } from 'htmlparser2';
-import { type Attempt, type Candidate, emailAddress, type MailMessage } from './model';
+import { type Candidate, emailAddress, type Inbox, type MailMessage } from './model';
 
 export function senderAddress(from: string): string | null {
   const match = /<([^<>]+)>\s*$/.exec(from);
@@ -99,29 +99,32 @@ function extractCode(message: MailMessage): string | null {
   return codes.length === 1 ? (codes[0] ?? null) : null;
 }
 
-export function selectCandidate(
+export const freshWindowMs = 180_000;
+
+export function freshCandidates(
   messages: MailMessage[],
-  attempt: Attempt,
+  inbox: Inbox,
+  consumed: Set<string>,
   now: number,
-): Candidate | 'ambiguous' | null {
-  if (now >= attempt.expiresAt) return null;
-  const baseline = new Set(attempt.baseline);
-  const candidates: Candidate[] = [];
+): Candidate[] {
+  const byCode = new Map<string, Candidate>();
   for (const message of messages) {
     const receivedAt = Date.parse(message.received_at);
     if (
       message.direction !== 'inbound' ||
-      baseline.has(message.id) ||
-      receivedAt < attempt.startedAt ||
+      consumed.has(message.id) ||
+      receivedAt < now - freshWindowMs ||
       receivedAt > now + 10_000
     )
       continue;
     const sender = senderAddress(message.from);
-    if (!sender || !message.to.some((value) => value.toLowerCase() === attempt.inbox.email_address))
+    if (!sender || !message.to.some((value) => value.toLowerCase() === inbox.email_address))
       continue;
     const code = extractCode(message);
-    if (code)
-      candidates.push({
+    if (!code) continue;
+    const previous = byCode.get(code);
+    if (!previous || previous.receivedAt < receivedAt)
+      byCode.set(code, {
         messageId: message.id,
         code,
         sender,
@@ -129,12 +132,5 @@ export function selectCandidate(
         receivedAt,
       });
   }
-  const distinct = (values: Candidate[]) => new Set(values.map((value) => value.code)).size;
-  let chosen = candidates;
-  if (distinct(chosen) > 1 && attempt.knownSender) {
-    const known = chosen.filter((value) => value.sender === attempt.knownSender);
-    if (known.length) chosen = known;
-  }
-  if (distinct(chosen) > 1) return 'ambiguous';
-  return chosen.sort((a, b) => b.receivedAt - a.receivedAt)[0] ?? null;
+  return [...byCode.values()].sort((a, b) => b.receivedAt - a.receivedAt).slice(0, 5);
 }
