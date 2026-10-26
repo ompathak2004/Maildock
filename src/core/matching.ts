@@ -7,6 +7,28 @@ export function senderAddress(from: string): string | null {
   return parsed.success ? parsed.data : null;
 }
 
+const blocks = new Set([
+  'p',
+  'div',
+  'td',
+  'th',
+  'tr',
+  'li',
+  'h1',
+  'h2',
+  'h3',
+  'h4',
+  'h5',
+  'h6',
+  'table',
+  'section',
+  'article',
+  'header',
+  'footer',
+  'pre',
+  'center',
+]);
+
 function messageText(message: MailMessage): string {
   if (message.text?.trim()) return message.text;
   let text = '';
@@ -16,10 +38,11 @@ function messageText(message: MailMessage): string {
     {
       onopentag(name) {
         if (excluded.has(name)) hidden++;
+        else if (name === 'br' && !hidden) text += '\n';
       },
       onclosetag(name) {
         if (excluded.has(name)) hidden--;
-        if (!hidden) text += ' ';
+        if (!hidden) text += blocks.has(name) ? '\n' : ' ';
       },
       ontext(value) {
         if (!hidden) text += value;
@@ -31,29 +54,49 @@ function messageText(message: MailMessage): string {
   return text;
 }
 
-function extractCode(message: MailMessage, length: number): string | null {
-  const body = messageText(message);
+const keyword =
+  /verif(?:y|ication)|one[- ]time|sign[- ]?in|log[- ]?in|security\s+code|authentication\s+code|\bOTP\b|\bcode\b|\bpasscode\b|\bPIN\b/i;
+const sensitive =
+  /password\s*(?:reset|recovery)|reset\s+(?:your\s+)?password|account\s+recovery|(?:payment|transfer|withdrawal|deletion)\s+(?:code|confirmation)/i;
+
+// Tier 1 binds the token to a label ("code: 123456", "123456 is your code"). Tier 2 is a token
+// standing alone on its line, which is how most HTML templates render the code. Tier 3 only has a
+// keyword nearby. A year-like token needs a label because footers and dates are full of them.
+function tier(text: string, index: number, code: string): 1 | 2 | 3 | null {
+  const end = index + code.length;
+  const before = text.slice(Math.max(0, index - 100), index);
+  const after = text.slice(end, end + 80);
+  if (/https?:\/\/\S*$/i.test(before) || /[=/&#?]$/.test(before)) return null;
   if (
-    /password\s*(?:reset|recovery)|reset\s+(?:your\s+)?password|account\s+recovery|(?:payment|transfer|withdrawal|deletion)\s+(?:code|confirmation)/i.test(
-      `${message.subject ?? ''} ${body.slice(0, 250)}`,
-    )
+    /(?:code|otp|passcode|pin)\b(?:\s+is)?[^a-z0-9]{0,12}$/i.test(before) ||
+    /^[^a-z0-9]{0,12}is\s+your\b/i.test(after)
   )
-    return null;
+    return 1;
+  if (/^(?:19|20)\d\d$/.test(code) || !keyword.test(before + after)) return null;
+  const lineStart = text.lastIndexOf('\n', index - 1) + 1;
+  const lineEnd = text.indexOf('\n', end);
+  if (
+    text.slice(lineStart, index).trim() === '' &&
+    text.slice(end, lineEnd === -1 ? undefined : lineEnd).trim() === ''
+  )
+    return 2;
+  return 3;
+}
+
+function extractCode(message: MailMessage): string | null {
+  const body = messageText(message);
+  if (sensitive.test(`${message.subject ?? ''} ${body.slice(0, 250)}`)) return null;
   const text = `${message.subject ?? ''}\n${body}`;
-  const matches = text.matchAll(new RegExp(`(?<![a-z0-9])([A-Z0-9]{${length}})(?![a-z0-9])`, 'gi'));
-  const codes = new Set<string>();
-  for (const match of matches) {
+  const best = new Map<string, number>();
+  for (const match of text.matchAll(/(?<![a-z0-9])([A-Z0-9]{4,8})(?![a-z0-9])/gi)) {
     const code = match[1];
     if (!code || !/\d/.test(code)) continue;
-    const context = text.slice(Math.max(0, match.index - 100), match.index + code.length + 80);
-    if (
-      /verif(?:y|ication)|one[- ]time|sign[- ]?in|log[- ]?in|security\s+code|authentication\s+code|\bOTP\b|\bcode\b/i.test(
-        context,
-      )
-    )
-      codes.add(code);
+    const rank = tier(text, match.index, code);
+    if (rank) best.set(code, Math.min(rank, best.get(code) ?? rank));
   }
-  return codes.size === 1 ? ([...codes][0] ?? null) : null;
+  const top = Math.min(...best.values());
+  const codes = [...best].filter(([, rank]) => rank === top).map(([code]) => code);
+  return codes.length === 1 ? (codes[0] ?? null) : null;
 }
 
 export function selectCandidate(
@@ -74,12 +117,9 @@ export function selectCandidate(
     )
       continue;
     const sender = senderAddress(message.from);
-    if (
-      sender !== attempt.sender ||
-      !message.to.some((value) => value.toLowerCase() === attempt.inbox.email_address)
-    )
+    if (!sender || !message.to.some((value) => value.toLowerCase() === attempt.inbox.email_address))
       continue;
-    const code = extractCode(message, attempt.codeLength);
+    const code = extractCode(message);
     if (code)
       candidates.push({
         messageId: message.id,
@@ -89,6 +129,12 @@ export function selectCandidate(
         receivedAt,
       });
   }
-  if (new Set(candidates.map((value) => value.code)).size > 1) return 'ambiguous';
-  return candidates.sort((a, b) => b.receivedAt - a.receivedAt)[0] ?? null;
+  const distinct = (values: Candidate[]) => new Set(values.map((value) => value.code)).size;
+  let chosen = candidates;
+  if (distinct(chosen) > 1 && attempt.knownSender) {
+    const known = chosen.filter((value) => value.sender === attempt.knownSender);
+    if (known.length) chosen = known;
+  }
+  if (distinct(chosen) > 1) return 'ambiguous';
+  return chosen.sort((a, b) => b.receivedAt - a.receivedAt)[0] ?? null;
 }

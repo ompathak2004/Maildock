@@ -194,8 +194,6 @@ test('connects, reads fresh mail, fills the selected tab after review, and revok
     type: 'watch.start',
     target: target.target,
     inboxId: connected.state.inboxes[0].id,
-    sender: 'accounts@example.com',
-    codeLength: 6,
   });
   if (!started.ok || !started.state.attempt) throw new Error('Watch start failed');
   deliveredAt = new Date(Date.now() + 100).toISOString();
@@ -233,6 +231,9 @@ test('connects, reads fresh mail, fills the selected tab after review, and revok
   expect(JSON.stringify(storage.local)).not.toContain('refresh-token');
   expect(JSON.stringify(storage.local)).not.toContain('123456');
   expect(JSON.stringify(storage.session.attempt)).not.toContain('123456');
+  expect(storage.local.settings).toMatchObject({
+    rules: [{ origin: 'https://login.example.test', sender: 'accounts@example.com' }],
+  });
   const disconnected = await command({ type: 'auth.disconnect' });
   expect(disconnected.ok && disconnected.state.connected).toBe(false);
   expect(revoked).toBe(true);
@@ -254,8 +255,6 @@ test('blocks tab changes and does not expose a general mailbox bridge to website
     type: 'watch.start',
     target: target.target,
     inboxId: connected.state.inboxes[0].id,
-    sender: 'accounts@example.com',
-    codeLength: 6,
   });
   expect(result).toMatchObject({ ok: false, code: 'page-changed' });
   await expect(website.locator('#otp')).toHaveValue('');

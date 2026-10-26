@@ -37,7 +37,6 @@ export type Target = z.infer<typeof targetSchema>;
 const ruleSchema = z.object({
   origin: z.url(),
   sender: emailAddress,
-  codeLength: z.number().int().min(4).max(8),
 });
 export const settingsSchema = z.object({
   schemaVersion: z.literal(1),
@@ -74,8 +73,7 @@ const attemptBase = {
   id: z.uuid(),
   target: targetSchema,
   inbox: inboxSchema,
-  sender: emailAddress,
-  codeLength: z.number().int().min(4).max(8),
+  knownSender: emailAddress.nullable(),
   startedAt: z.number(),
   expiresAt: z.number(),
   baseline: z.array(messageId).max(2000),
@@ -106,8 +104,6 @@ export const commandSchema = z.discriminatedUnion('type', [
     type: z.literal('watch.start'),
     inboxId,
     target: targetSchema,
-    sender: emailAddress,
-    codeLength: z.number().int().min(4).max(8),
   }),
   z.strictObject({ type: z.literal('watch.poll'), attemptId: z.uuid() }),
   z.strictObject({ type: z.literal('watch.stop') }),

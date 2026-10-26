@@ -24,23 +24,23 @@ For a stable distribution, register a public Resend client with the exact callba
 1. Configure receiving for a domain you control in Resend. If another provider handles your domain's mail, use a dedicated receiving subdomain. Copy DNS values from your account; Maildock does not change DNS.
 2. Connect Resend in Maildock. Select an existing inbox or explicitly create one. Inbox creation can affect your Resend bill. Create it before requesting a code.
 3. Use that inbox's exact address on the website. For example, `work@ompathak.dev` and `work@ompathakd.dev` are different addresses on different domains.
-4. On the page containing the verification field, click the Maildock toolbar button, then **Use current tab**. Enter the exact sender from a previous verification email and the code length.
+4. On the page containing the verification field, click the Maildock toolbar button, then **Use current tab**. Maildock detects the sender and code length from the email itself.
 5. Start watching, then request a fresh code on that page. Keep the panel open. Navigating to a new document ends the watch, so use the website's resend action once you reach its verification page.
-6. Review the sender, message subject, and target website, confirm the review, and choose **Fill code**. Maildock does not click Submit. A website may submit automatically in response to input.
+6. Review the sender, message subject, and target website, confirm the review, and choose **Fill code**. After the first fill, Maildock remembers the sender for that website and tells you when a later code comes from a different address. Maildock does not click Submit. A website may submit automatically in response to input.
 7. **Disconnect** revokes the current Resend grant. Reconnect after a browser restart because credentials are stored only for the browser session.
 
-Supported fields: one identifiable verification input, or one group of single-character inputs. Ambiguous, occupied, hidden, password, cross-frame, and non-HTTPS targets are rejected. Codes contain 4–8 alphanumeric characters with at least one digit; letter case is preserved. English verification wording is currently required.
+Supported fields: one identifiable verification input, or one group of single-character inputs. Ambiguous, occupied, hidden, password, cross-frame, and non-HTTPS targets are rejected. Codes contain 4–8 alphanumeric characters with at least one digit; letter case is preserved. English verification wording is currently required. A labelled code (“code: 123456”, “123456 is your code”) wins over a bare number; two equally likely codes fail closed.
 
 ## Security model
 
 - The service worker owns OAuth, token rotation, provider access, and attempts. The panel receives selected message metadata and the candidate code, never credentials or full email bodies.
 - Tokens and active attempts use trusted `chrome.storage.session`. Only preferences and the public OAuth client ID persist locally. Nothing uses browser sync.
 - Page access uses a toolbar gesture and `activeTab`. There are no permanent content scripts or all-site host permissions.
-- Each attempt binds one inbox, sender, exact HTTPS origin, tab, and document for three minutes. Old messages are excluded. Conflicting codes fail closed.
+- Each attempt binds one inbox, exact HTTPS origin, tab, and document for three minutes. Old messages are excluded. Conflicting codes fail closed; a sender remembered from a previous fill on that website only breaks ties.
 - Only the bundled panel document can issue validated commands. There is no webpage mailbox bridge or generic fetch command.
 - Email HTML is parsed as data. It is never rendered, executed, or fetched. There is no telemetry, remote code, or LLM processing.
 
-Sender address matching does not authenticate a sender. Resend's Inbox response does not expose the authentication evidence needed for unattended processing. Review remains mandatory. A compromised browser, extension update, or user device is outside this protection boundary.
+Sender addresses do not authenticate a sender. Resend's Inbox response does not expose the authentication evidence needed for unattended processing. Review remains mandatory. A compromised browser, extension update, or user device is outside this protection boundary.
 
 See [architecture](docs/ARCHITECTURE.md), [privacy and retention](docs/PRIVACY.md), and [API research, Gmail options, and comparable products](RESEARCH.md).
 

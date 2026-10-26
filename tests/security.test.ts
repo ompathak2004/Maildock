@@ -19,8 +19,7 @@ const attempt = attemptSchema.parse({
     email_address: 'work@inbox.test',
     name: 'Work',
   },
-  sender: 'accounts@example.com',
-  codeLength: 6,
+  knownSender: null,
   startedAt: now - 10_000,
   expiresAt: now + 120_000,
   baseline: [],
@@ -63,16 +62,78 @@ describe('mailbox-to-website boundary', () => {
     ).toMatchObject({ code: '654321' });
   });
 
-  it('rejects wrong recipients, spoofed display names, stale mail, outbound mail and expired attempts', () => {
+  it('detects the code length and prefers the labelled code over years, links and order numbers', () => {
+    const cases: [string, string | null][] = [
+      ['Your PIN is 4821. Enter it within 10 minutes. © 2026 Example Inc.', '4821'],
+      ['Sign-in code\n\nXK7P2M9Q\n\nOrder #10203040 ships Monday.', 'XK7P2M9Q'],
+      ['Use code 123456 to verify https://example.com/verify?token=98765432', '123456'],
+      ['Your verification code is 2026. Sent October 2026.', '2026'],
+      ['Thanks for your order 48213 placed in 2026.', null],
+    ];
+    for (const [text, code] of cases)
+      expect(selectCandidate([email({ subject: null, text })], attempt, now), text).toEqual(
+        code ? expect.objectContaining({ code }) : null,
+      );
+    expect(
+      selectCandidate(
+        [
+          email({
+            subject: null,
+            text: null,
+            html: '<p>Your login code</p><table><tr><td style="font-size:32px">735 918</td></tr></table><p>Code expires at 09:30</p><footer>Example Inc. 2026</footer>',
+          }),
+        ],
+        attempt,
+        now,
+      ),
+    ).toBeNull();
+    expect(
+      selectCandidate(
+        [
+          email({
+            subject: null,
+            text: null,
+            html: '<p>Your login code</p><table><tr><td style="font-size:32px">735918</td></tr></table><p>It expires at 09:30</p><footer>Example Inc. 2026</footer>',
+          }),
+        ],
+        attempt,
+        now,
+      ),
+    ).toMatchObject({ code: '735918' });
+  });
+
+  it('rejects wrong recipients, unparseable senders, stale mail, outbound mail and expired attempts', () => {
     for (const change of [
       { to: ['someone-else@inbox.test'] },
-      { from: '"accounts@example.com" <attacker@evil.test>' },
+      { from: 'not an address' },
       { received_at: new Date(now - 60_000).toISOString() },
       { direction: 'outbound' },
     ])
       expect(selectCandidate([email(change)], attempt, now)).toBeNull();
     expect(selectCandidate([email()], attempt, attempt.expiresAt)).toBeNull();
     expect(senderAddress('"accounts@example.com" <attacker@evil.test>')).toBe('attacker@evil.test');
+    expect(
+      selectCandidate(
+        [email({ from: '"accounts@example.com" <attacker@evil.test>' })],
+        attempt,
+        now,
+      ),
+    ).toMatchObject({ sender: 'attacker@evil.test' });
+  });
+
+  it('uses the remembered sender only to break ties between competing fresh codes', () => {
+    const known = { ...attempt, knownSender: 'accounts@example.com' as const };
+    const other = email({
+      id: 'b1353064-588e-4e55-9c86-2da7d0fb72c8',
+      from: 'Other <noreply@other.test>',
+      text: 'Your code is 654321',
+    });
+    expect(selectCandidate([email(), other], attempt, now)).toBe('ambiguous');
+    expect(selectCandidate([email(), other], known, now)).toMatchObject({
+      code: '123456',
+      sender: 'accounts@example.com',
+    });
+    expect(selectCandidate([other], known, now)).toMatchObject({ sender: 'noreply@other.test' });
   });
 
   it('does not reuse baseline messages or pick between competing fresh codes', () => {
@@ -87,10 +148,14 @@ describe('mailbox-to-website boundary', () => {
     ).toBe('ambiguous');
   });
 
-  it('refuses recovery emails and messages containing multiple possible codes', () => {
+  it('refuses recovery emails and messages containing multiple equally likely codes', () => {
     expect(selectCandidate([email({ subject: 'Password reset code' })], attempt, now)).toBeNull();
     expect(
-      selectCandidate([email({ text: 'Your code is 123456 or 654321' })], attempt, now),
+      selectCandidate(
+        [email({ text: 'Your code is 123456. Your second code is 654321.' })],
+        attempt,
+        now,
+      ),
     ).toBeNull();
   });
 });

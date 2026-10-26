@@ -55,25 +55,29 @@ async function start(command: Extract<Command, { type: 'watch.start' }>): Promis
   await assertTarget(target);
   const now = Date.now();
   const settings = await getSettings();
-  const rule = { origin: target.origin, sender: command.sender, codeLength: command.codeLength };
-  await saveSettings({
-    ...settings,
-    selectedInboxId: inbox.id,
-    rules: [...settings.rules.filter((value) => value.origin !== target.origin), rule].slice(-100),
-  });
+  await saveSettings({ ...settings, selectedInboxId: inbox.id });
   await saveAttempt({
     id: crypto.randomUUID(),
     phase: 'watching',
     target,
     inbox,
-    sender: command.sender,
-    codeLength: command.codeLength,
+    knownSender: settings.rules.find((value) => value.origin === target.origin)?.sender ?? null,
     startedAt: now,
     expiresAt: now + 180_000,
     baseline: recent.map((value) => value.id),
     checkedAt: now,
     nextPollAt: now + 3000,
     note: null,
+  });
+}
+
+async function rememberSender(origin: string, sender: string): Promise<void> {
+  const settings = await getSettings();
+  await saveSettings({
+    ...settings,
+    rules: [...settings.rules.filter((value) => value.origin !== origin), { origin, sender }].slice(
+      -100,
+    ),
   });
 }
 
@@ -186,6 +190,7 @@ async function execute(command: Command): Promise<Response> {
           'The matching message changed. Review the current result before filling.',
         );
       await saveAttempt({ ...verified, phase: 'filled', baseline: [] });
+      await rememberSender(verified.target.origin, verified.candidate.sender);
       try {
         await fillTarget(verified.target, verified.candidate.code);
       } catch (error) {

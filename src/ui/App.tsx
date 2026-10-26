@@ -7,8 +7,6 @@ import { ParticleWordmark } from './ParticleWordmark';
 export function App() {
   const [view, setView] = useState<ViewState | null>(null);
   const [target, setTarget] = useState<Target | null>(null);
-  const [sender, setSender] = useState('');
-  const [codeLength, setCodeLength] = useState(6);
   const [busy, setBusy] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [accepted, setAccepted] = useState(false);
@@ -25,17 +23,9 @@ export function App() {
     try {
       const result = await send(command);
       setView(result.state);
-      if (result.target) {
-        setTarget(result.target);
-        const rule = result.state.settings.rules.find(
-          (value) => value.origin === result.target?.origin,
-        );
-        setSender(rule?.sender ?? '');
-        setCodeLength(rule?.codeLength ?? 6);
-      }
+      if (result.target) setTarget(result.target);
       if (command.type === 'auth.disconnect') {
         setTarget(null);
-        setSender('');
         setAccepted(false);
       }
       if (command.type === 'inbox.create') {
@@ -85,21 +75,15 @@ export function App() {
     view?.inboxes.find((value) => value.id === view.settings.selectedInboxId) ?? view?.inboxes[0];
   const active = phase === 'watching' || phase === 'ready';
   const disabled = !!busy;
+  const knownSender = view?.settings.rules.find((value) => value.origin === target?.origin)?.sender;
 
   function start(event: FormEvent) {
     event.preventDefault();
-    const parsed = emailAddress.safeParse(sender.trim());
-    if (!selected || !target || !parsed.success) {
-      setError('Enter the exact email address this website sends codes from.');
+    if (!selected || !target) {
+      setError('Select an inbox and the login tab before watching.');
       return;
     }
-    void run({
-      type: 'watch.start',
-      inboxId: selected.id,
-      target,
-      sender: parsed.data,
-      codeLength,
-    });
+    void run({ type: 'watch.start', inboxId: selected.id, target });
   }
 
   function create(event: FormEvent) {
@@ -317,34 +301,13 @@ export function App() {
                   </p>
                 )}
                 <form onSubmit={start} className="watch-form">
-                  <label htmlFor="sender">Expected sender address</label>
-                  <input
-                    id="sender"
-                    type="email"
-                    placeholder="accounts@example.com"
-                    value={sender}
-                    onChange={(event) => setSender(event.target.value)}
-                    required
-                    maxLength={254}
-                  />
-                  <p className="field-hint">
-                    Use the exact sender from a previous verification email. The sender is not
-                    necessarily the website’s domain.
-                  </p>
-                  <div className="length-row">
-                    <label htmlFor="length">Code length</label>
-                    <select
-                      id="length"
-                      value={codeLength}
-                      onChange={(event) => setCodeLength(Number(event.target.value))}
-                    >
-                      {[4, 5, 6, 7, 8].map((value) => (
-                        <option key={value} value={value}>
-                          {value} characters
-                        </option>
-                      ))}
-                    </select>
-                  </div>
+                  {target && (
+                    <p className="field-hint">
+                      {knownSender
+                        ? `Codes for this website came from ${knownSender} before.`
+                        : 'Maildock finds the sender and code length from the email itself.'}
+                    </p>
+                  )}
                   <div className="instruction">
                     <p>
                       Start watching here.
@@ -355,7 +318,7 @@ export function App() {
                   <button
                     type="submit"
                     className="primary"
-                    disabled={disabled || !selected || !target || !sender}
+                    disabled={disabled || !selected || !target}
                   >
                     {busy === 'watch.start' ? 'Preparing inbox…' : 'Start watching'}
                   </button>
@@ -367,7 +330,13 @@ export function App() {
                 <p className="eyebrow">Watching for a new email</p>
                 <h2>Now request your code.</h2>
                 <p>
-                  Waiting for <strong>{attempt.sender}</strong>
+                  {attempt.knownSender ? (
+                    <>
+                      Expecting <strong>{attempt.knownSender}</strong>
+                    </>
+                  ) : (
+                    'Waiting for a new verification email'
+                  )}
                 </p>
                 <dl className="message-details route">
                   <div>
@@ -410,6 +379,16 @@ export function App() {
                   <div>
                     <dt>From</dt>
                     <dd>{attempt.candidate.sender}</dd>
+                  </div>
+                  <div>
+                    <dt>Sender</dt>
+                    <dd>
+                      {attempt.knownSender === null
+                        ? 'First code for this website. Check the address.'
+                        : attempt.knownSender === attempt.candidate.sender
+                          ? 'Same sender as your last fill here.'
+                          : `Differs from ${attempt.knownSender}, which you used here before.`}
+                    </dd>
                   </div>
                   <div>
                     <dt>Subject</dt>
