@@ -73,9 +73,14 @@ function parseHtml(html: string): { text: string; anchors: Anchor[] } {
   return { text, anchors };
 }
 
-function messageText(message: MailMessage): string {
-  if (message.text?.trim()) return message.text;
-  return parseHtml(message.html ?? '').text;
+type Parsed = { subject: string; text: string; html: { text: string; anchors: Anchor[] } };
+
+function parseMessage(message: MailMessage): Parsed {
+  return {
+    subject: message.subject ?? '',
+    text: message.text?.trim() ? message.text : '',
+    html: message.html ? parseHtml(message.html) : { text: '', anchors: [] },
+  };
 }
 
 // Codes are often typeset in groups ("735 918", "4821-7730") that the token scan would treat as
@@ -122,15 +127,14 @@ function tier(text: string, index: number, code: string): 1 | 2 | 3 | null {
   return 3;
 }
 
-// Recovery and payment messages are never candidates, whether they carry a code or a link.
-function sensitiveMessage(message: MailMessage, body: string): boolean {
-  return sensitive.test(`${message.subject ?? ''} ${body.slice(0, 250)}`);
+// Recovery and payment messages are never candidates, whether they carry a code or a link, and
+// whichever of the plain-text or HTML part says so.
+function sensitiveMessage({ subject, text, html }: Parsed): boolean {
+  return sensitive.test(`${subject} ${text.slice(0, 250)} ${html.text.slice(0, 250)}`);
 }
 
-function extractCode(message: MailMessage): string | null {
-  const body = messageText(message);
-  if (sensitiveMessage(message, body)) return null;
-  const text = joinGroups(`${message.subject ?? ''}\n${body}`);
+function extractCode({ subject, text: plain, html }: Parsed): string | null {
+  const text = joinGroups(`${subject}\n${plain || html.text}`);
   const best = new Map<string, number>();
   for (const match of text.matchAll(/(?<![a-z0-9])([A-Z0-9]{4,8})(?![a-z0-9])/gi)) {
     const code = match[1];
@@ -150,12 +154,10 @@ const signInLabel = /^\s*(?:sign[- ]?in|log[- ]?in|verify|confirm|continue)\b/i;
 // A sign-in link is offered only when the message carries no code, the subject reads like a
 // sign-in request, and exactly one HTTPS link is labelled as the sign-in action. Bare IPs and
 // punycode hosts are refused because they are the usual shape of look-alike phishing links.
-function extractLink(message: MailMessage): string | null {
-  if (!message.html || !signInSubject.test(message.subject ?? '')) return null;
-  const { text, anchors } = parseHtml(message.html);
-  if (sensitiveMessage(message, text)) return null;
+function extractLink({ subject, html }: Parsed): string | null {
+  if (!signInSubject.test(subject)) return null;
   const urls = new Set<string>();
-  for (const anchor of anchors) {
+  for (const anchor of html.anchors) {
     if (!signInLabel.test(anchor.label)) continue;
     let url: URL;
     try {
@@ -179,8 +181,9 @@ function extractLink(message: MailMessage): string | null {
 
 export const freshWindowMs = 180_000;
 
-// Hosting suffixes under which unrelated parties own sibling subdomains (the private section of
-// the Public Suffix List). Two senders on such a suffix are not the same organisation.
+// Hosting suffixes under which unrelated parties own sibling subdomains (a subset of the private
+// section of the Public Suffix List). Hosts under these only match when the hostnames are equal,
+// because the suffixes nest (`s3.amazonaws.com`) and the list cannot be complete.
 const sharedSuffixes = [
   'github.io',
   'gitlab.io',
@@ -218,11 +221,8 @@ const sharedSuffixes = [
 
 function registrableDomain(host: string): string {
   const labels = host.toLowerCase().split('.');
-  const shared = sharedSuffixes.find(
-    (suffix) =>
-      host.toLowerCase().endsWith(`.${suffix}`) && labels.length > suffix.split('.').length,
-  );
-  if (shared) return labels.slice(-(shared.split('.').length + 1)).join('.');
+  if (sharedSuffixes.some((suffix) => host.toLowerCase().endsWith(`.${suffix}`)))
+    return host.toLowerCase();
   const second = labels.at(-2) ?? '';
   const take = labels.length > 2 && second.length <= 3 && (labels.at(-1)?.length ?? 0) <= 2 ? 3 : 2;
   return labels.slice(-take).join('.');
@@ -268,8 +268,10 @@ export function freshCandidates(
       receivedAt,
       check: checks.get(message.id) ?? 'unknown',
     } as const;
-    const code = extractCode(message);
-    const url = code ? null : extractLink(message);
+    const parsed = parseMessage(message);
+    if (sensitiveMessage(parsed)) continue;
+    const code = extractCode(parsed);
+    const url = code ? null : extractLink(parsed);
     const candidate: Candidate | null = code
       ? { ...base, kind: 'code', code }
       : url

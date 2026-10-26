@@ -118,6 +118,15 @@ describe('mailbox-to-website boundary', () => {
         '<p>Use this link for account recovery.</p><a href="https://example.com/r?t=abcdefgh12345678">Continue</a>',
       ),
     ).toBeNull();
+    expect(
+      first([
+        email({
+          subject: 'Sign in to Example',
+          text: 'Use this link for account recovery.',
+          html: '<a href="https://example.com/r?t=abcdefgh12345678">Continue</a>',
+        }),
+      ]),
+    ).toBeNull();
     expect(link('Sign in to Example', '<a href="http://example.com/login">Sign in</a>')).toBeNull();
     expect(
       link('Sign in to Example', '<a href="https://93.184.216.34/login">Sign in</a>'),
@@ -148,8 +157,11 @@ describe('mailbox-to-website boundary', () => {
     expect(senderMatchesSite('x@example.co.uk', 'https://evil.co.uk')).toBe(false);
     expect(senderMatchesSite('x@openai.com.evil.test', 'https://auth.openai.com')).toBe(false);
     expect(senderMatchesSite('x@attacker.github.io', 'https://victim.github.io')).toBe(false);
-    expect(senderMatchesSite('x@mail.victim.vercel.app', 'https://victim.vercel.app')).toBe(true);
-    expect(senderMatchesSite('x@github.io', 'https://github.io')).toBe(true);
+    expect(senderMatchesSite('x@victim.vercel.app', 'https://victim.vercel.app')).toBe(true);
+    expect(senderMatchesSite('x@mail.victim.vercel.app', 'https://victim.vercel.app')).toBe(false);
+    expect(
+      senderMatchesSite('x@attacker.s3.amazonaws.com', 'https://victim.s3.amazonaws.com'),
+    ).toBe(false);
   });
 
   it('carries the sender check through and defaults it to unknown', () => {
