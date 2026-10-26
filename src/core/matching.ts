@@ -107,12 +107,13 @@ export function freshCandidates(
   consumed: Set<string>,
   now: number,
 ): Candidate[] {
-  const byCode = new Map<string, Candidate>();
+  // Resends of one code collapse into the newest message. Consuming any copy must retire the
+  // whole group, so consumption is tracked per code rather than per message.
+  const byCode = new Map<string, { candidate: Candidate; consumed: boolean }>();
   for (const message of messages) {
     const receivedAt = Date.parse(message.received_at);
     if (
       message.direction !== 'inbound' ||
-      consumed.has(message.id) ||
       receivedAt < now - freshWindowMs ||
       receivedAt > now + 10_000
     )
@@ -122,15 +123,23 @@ export function freshCandidates(
       continue;
     const code = extractCode(message);
     if (!code) continue;
-    const previous = byCode.get(code);
-    if (!previous || previous.receivedAt < receivedAt)
-      byCode.set(code, {
-        messageId: message.id,
-        code,
-        sender,
-        subject: (message.subject ?? '(No subject)').slice(0, 200),
-        receivedAt,
-      });
+    const candidate: Candidate = {
+      messageId: message.id,
+      code,
+      sender,
+      subject: (message.subject ?? '(No subject)').slice(0, 200),
+      receivedAt,
+    };
+    const group = byCode.get(code);
+    if (!group) byCode.set(code, { candidate, consumed: consumed.has(message.id) });
+    else {
+      group.consumed ||= consumed.has(message.id);
+      if (group.candidate.receivedAt < receivedAt) group.candidate = candidate;
+    }
   }
-  return [...byCode.values()].sort((a, b) => b.receivedAt - a.receivedAt).slice(0, 5);
+  return [...byCode.values()]
+    .filter((group) => !group.consumed)
+    .map((group) => group.candidate)
+    .sort((a, b) => b.receivedAt - a.receivedAt)
+    .slice(0, 5);
 }

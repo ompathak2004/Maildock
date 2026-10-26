@@ -25,6 +25,7 @@ let id: string;
 let deliveredAt: string | null;
 let revoked: boolean;
 let refreshes: number;
+let revokedUpstream: boolean;
 
 async function command(value: Command) {
   const raw: unknown = await panel.evaluate(
@@ -51,6 +52,7 @@ test.beforeEach(async () => {
   deliveredAt = null;
   revoked = false;
   refreshes = 0;
+  revokedUpstream = false;
   const extension = resolve('.output/chrome-mv3');
   context = await chromium.launchPersistentContext('', {
     channel: 'chromium',
@@ -70,6 +72,10 @@ test.beforeEach(async () => {
   id = new URL(worker.url()).host;
   await context.route('https://api.resend.com/**', async (route) => {
     const path = new URL(route.request().url()).pathname;
+    if (revokedUpstream && path.startsWith('/inboxes/')) {
+      await route.fulfill({ status: 401, json: { message: 'Unauthorized' } });
+      return;
+    }
     let json: unknown;
     switch (path) {
       case '/oauth/register':
@@ -262,4 +268,15 @@ test('rejects a stale page, survives navigation, and does not expose a mailbox b
   expect(fresh.ok).toBe(true);
   await expect(website.locator('#otp')).toHaveValue('123456');
   expect(await website.evaluate(() => typeof chrome.runtime?.sendMessage)).toBe('undefined');
+  // Upstream revocation during polling must reach the panel as a disconnected view, not as a loop
+  // of errors over stale cards.
+  deliveredAt = new Date().toISOString();
+  revokedUpstream = true;
+  await expect
+    .poll(async () => {
+      const response = await command({ type: 'watch.poll' });
+      return response.ok ? response.state : response.code;
+    })
+    .toMatchObject({ connected: false, watch: { codes: [] } });
+  await expect(panel.getByRole('button', { name: 'Continue with Resend' })).toBeVisible();
 });

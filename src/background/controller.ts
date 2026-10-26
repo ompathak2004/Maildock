@@ -56,9 +56,12 @@ export async function state(): Promise<ViewState> {
   return { connected: !!auth, inboxes: auth ? inboxes : [], settings: preferences, watch };
 }
 
+// A forced poll precedes a fill and must not fall back to cached codes: a code that was fresh
+// before a slow failed request may be expired by the time the request gives up.
 async function poll(force = false): Promise<Watch> {
-  const watch = (await state()).watch;
-  const inbox = await selectedInbox();
+  const view = await state();
+  const watch = view.watch;
+  const inbox = view.connected ? await selectedInbox() : null;
   const now = Date.now();
   if (!inbox || (!force && now < watch.nextPollAt)) return watch;
   try {
@@ -74,6 +77,7 @@ async function poll(force = false): Promise<Watch> {
     return next;
   } catch (error) {
     if (
+      !force &&
       error instanceof AppError &&
       ['network', 'rate-limit', 'provider', 'response'].includes(error.code)
     ) {
@@ -109,7 +113,7 @@ async function fill(command: Extract<Command, { type: 'watch.fill' }>): Promise<
     throw new AppError('page-changed', 'The page changed. Check the website shown and try again.');
   const watch = await poll(true);
   const candidate = watch.codes.find((value) => value.messageId === command.messageId);
-  if (!candidate)
+  if (!candidate || candidate.receivedAt < Date.now() - freshWindowMs)
     throw new AppError('no-code', 'That code is no longer available. Review the current codes.');
   await fillTarget(target, candidate.code);
   await saveWatch({
@@ -143,7 +147,8 @@ async function execute(command: Command): Promise<Response> {
     case 'inbox.select': {
       if (!(await getInboxes()).some((value) => value.id === command.inboxId))
         throw new AppError('no-inbox', 'That inbox is no longer available. Refresh the list.');
-      await saveWatch(null);
+      // Message IDs are unique across inboxes, so consumption survives switching inboxes.
+      await saveWatch({ ...idleWatch, consumed: (await state()).watch.consumed });
       await saveSettings({ ...(await getSettings()), selectedInboxId: command.inboxId });
       break;
     }

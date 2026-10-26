@@ -110,6 +110,11 @@ describe('mailbox-to-website boundary', () => {
       { code: '654321', sender: 'noreply@other.test' },
     ]);
     expect(first([email()], new Set([email().id]))).toBeNull();
+    // Consuming the displayed copy retires every copy of that code, in either arrival order.
+    expect(
+      freshCandidates([email(), other, resend], inbox, new Set([resend.id]), now),
+    ).toMatchObject([{ code: '654321' }]);
+    expect(freshCandidates([email(), resend], inbox, new Set([email().id]), now)).toEqual([]);
   });
 
   it('refuses recovery emails and messages containing multiple equally likely codes', () => {
