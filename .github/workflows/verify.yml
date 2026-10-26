@@ -34,4 +34,5 @@ jobs:
           name: maildock-chrome
           path: .output/maildock-*-chrome.zip
           if-no-files-found: error
+          include-hidden-files: true
           retention-days: 14
