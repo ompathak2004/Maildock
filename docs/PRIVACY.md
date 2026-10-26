@@ -44,4 +44,4 @@ There are no permanent content scripts, all-site host grants, general browsing-h
 
 ## Development artifacts
 
-Automated tests use fake credentials and intercepted provider responses. Screenshots and traces are ignored by Git. Do not run tracing against a real inbox or include real messages, codes, keys, or OAuth responses in bug reports. CI has no Resend account credentials.
+Automated tests use fake credentials and intercepted provider responses. Failure traces are ignored by Git. Do not run tracing against a real inbox or include real messages, codes, keys, or OAuth responses in bug reports. CI has no Resend account credentials.

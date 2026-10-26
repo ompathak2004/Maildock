@@ -1,76 +1,138 @@
 # Maildock
 
-A Chrome extension that brings a fresh email verification code from your Resend inbox to the login page you choose. Built with **TypeScript, React, and WXT**, using Manifest V3. There is no Maildock backend.
+[![Verify](https://github.com/ompathak2004/Maildock/actions/workflows/verify.yml/badge.svg)](https://github.com/ompathak2004/Maildock/actions/workflows/verify.yml)
+[![License: MIT](https://img.shields.io/badge/License-MIT-black.svg)](LICENSE)
+[![Chrome Manifest V3](https://img.shields.io/badge/Chrome-Manifest%20V3-black.svg)](https://developer.chrome.com/docs/extensions/develop/migrate/what-is-mv3)
 
-The implementation is ready for local evaluation. Automated checks use a real browser and simulated Resend responses. Live Resend OAuth, DNS delivery, and account behavior still need verification before release; this is not an independently audited product.
+Maildock is a Chrome extension that brings a fresh email verification code from your [Resend](https://resend.com) inbox to the login page you are on. Open the side panel, request a code on the website, and click one button to fill it. No backend, no content scripts, no all-sites permission.
 
-## Run locally
+## Demo
 
-Requires Node.js 24 or newer and Chrome 120 or newer.
+https://github.com/user-attachments/assets/5bade745-f231-48fc-ba25-d6019a83edc6
+
+## How it works
+
+1. You sign in to a website with an address from a Resend inbox you own, for example `me@inbound.yourdomain.com`.
+2. Maildock watches that inbox while the side panel is open and lists any verification code or sign-in link that arrived in the last three minutes.
+3. You click **Fill 123456 on example.com**. The service worker rechecks the tab, origin, and document, then fills the code. It never clicks Submit.
+
+Everything runs inside the extension. The service worker talks to the Resend API directly. The panel never sees tokens or full message bodies.
+
+## Install
+
+Maildock is not on the Chrome Web Store yet. Build it from source.
+
+Requirements: Node.js 24 or newer, npm, and Chrome 120 or newer.
 
 ```sh
+git clone https://github.com/ompathak2004/Maildock.git
+cd Maildock
 npm ci
-npm run check
+npm run build
 ```
 
-Open `chrome://extensions`, enable Developer mode, choose **Load unpacked**, and select `.output/chrome-mv3`. Pin Maildock to the toolbar. `npm run dev` starts WXT's development build; use the production build for account testing.
+Then load it in Chrome:
 
-No API key or client secret is required. The extension registers a public OAuth client for its own callback on first connection. Login and consent happen on Resend. Resend currently requires `full_access` for inbox operations; use a dedicated account for evaluation.
+1. Open `chrome://extensions`.
+2. Turn on **Developer mode**.
+3. Click **Load unpacked** and select the `.output/chrome-mv3` folder.
+4. Pin Maildock to the toolbar.
 
-For a stable distribution, register a public Resend client with the exact callback `https://<extension-id>.chromiumapp.org/resend`. Copy `.env.example` to `.env` and set `WXT_RESEND_CLIENT_ID`. Optionally set `WXT_EXTENSION_PUBLIC_KEY` to the extension's public manifest key to keep the development ID stable. These values are public configuration. Never add a client secret, API key, or private signing key.
+No API key or client secret is needed. Maildock registers a public OAuth client with Resend on first connection; login and consent happen on resend.com.
+
+## Set up Resend
+
+1. In the Resend dashboard, enable **Receiving** for a domain or subdomain you control and add the DNS records it shows. Maildock does not change DNS.
+2. Create an inbox on that domain, or let Maildock create one from the panel. Inbox creation can affect your Resend bill.
+3. Use that inbox address when you sign up or sign in on websites.
+
+Resend currently requires the `full_access` OAuth scope for inbox operations. Use a dedicated Resend account or a dedicated inbox for verification mail.
 
 ## Use it
 
-1. Configure receiving for a domain you control in Resend. If another provider handles your domain's mail, use a dedicated receiving subdomain. Copy DNS values from your account; Maildock does not change DNS.
-2. Connect Resend in Maildock. Select an existing inbox or explicitly create one. Inbox creation can affect your Resend bill. Create it before requesting a code.
-3. Use that inbox's exact address on the website. For example, `work@ompathak.dev` and `work@ompathakd.dev` are different addresses on different domains.
-4. Open the Maildock panel and request a code on the website. Maildock watches the selected inbox while the panel is open. Any verification code that arrived in the last three minutes appears in the panel; there is nothing to start, and no sender or code length to type.
-5. When the website shows its code field, click the Maildock toolbar button once. That gesture allows Maildock to fill that tab. Navigating between pages on the same site keeps the permission; a new site needs one more click. After a fill, **Always allow <site>** grants that one site permanently so the next login there needs no toolbar click; remove it any time under _Allowed websites_. **Copy code** works everywhere, including pages Maildock cannot fill.
-   Emails that sign you in with a link instead of a code show the link's host and an **Open link** button; nothing opens until you press it.
-6. Check the sender, subject, and the website named on the button, then choose **Fill … on <site>**. Filling is your confirmation. After the first fill, Maildock remembers the sender for that website and tells you when a later code comes from a different address. Maildock does not click Submit. A website may submit automatically in response to input.
-7. **Disconnect** revokes the current Resend grant. Reconnect after a browser restart because credentials are stored only for the browser session.
+1. Click the Maildock icon to open the side panel and press **Continue with Resend**.
+2. Select the inbox to watch.
+3. On the website, request a code. The code appears in the panel within a few seconds, with the sender, subject, and Resend's sender-authentication result.
+4. Click the Maildock toolbar button once on the login page. That click lets Maildock fill that tab. Moving between pages on the same site keeps the permission.
+5. Check the sender and the site named on the button, then click **Fill … on <site>**.
 
-Supported fields: one identifiable verification input, or one group of single-character inputs. Ambiguous, occupied, hidden, password, cross-frame, and non-HTTPS targets are rejected. Codes contain 4–8 alphanumeric characters with at least one digit; letter case is preserved. English verification wording is currently required. A labelled code (“code: 123456”, “123456 is your code”) wins over a bare number; two equally likely codes fail closed.
+Other things the panel does:
+
+- **Copy code** puts the code on the clipboard for pages Maildock cannot fill, such as cross-origin frames.
+- **Open link on <host>** opens a sign-in link from an email that has no code. Nothing opens until you click.
+- **Always allow <site>** appears after a fill. It grants that one site permanently, so the next login there needs no toolbar click. Remove it any time under **Allowed websites**.
+- **Disconnect** revokes the Resend grant. Credentials live only for the browser session, so reconnect after a restart.
+
+Supported fields: one identifiable verification input, or one group of single-character inputs. Codes are 4–8 alphanumeric characters with at least one digit. Grouped codes such as `735 918` or `4821-7730` are joined. English verification wording is required today.
 
 ## Security model
 
-- The service worker owns OAuth, token rotation, provider access, and the inbox watch. The panel receives selected message metadata and candidate codes, never credentials or full email bodies.
-- Tokens and fresh codes use trusted `chrome.storage.session`. Only preferences and the public OAuth client ID persist locally. Nothing uses browser sync.
-- Page access uses a toolbar gesture and `activeTab`, or a per-site grant the user makes from the panel. There are no content scripts and no all-site host permission at install time.
-- Every card shows Resend's sender authentication result (SPF/DKIM/DMARC, computed by Resend's receiving server). A sender that fails authentication cannot be filled, copied, or opened. A sender whose domain matches the current website is listed first and marked.
-- Sign-in links are offered only when the message has no code, the subject reads like a sign-in request, and exactly one HTTPS link is labelled as that action. Bare-IP and punycode hosts are refused.
-- Only codes received in the last three minutes are offered, and a filled or discarded message never returns. Each fill binds the exact HTTPS origin, tab, and document shown on the button at the moment of the click; the worker rechecks all three before injecting.
-- Only the bundled panel document can issue validated commands. There is no webpage mailbox bridge or generic fetch command.
-- Email HTML is parsed as data. It is never rendered, executed, or fetched. There is no telemetry, remote code, or LLM processing.
+- **One click per code.** Maildock never fills or submits on its own. The worker rechecks the HTTPS origin, tab, and document at the moment you click.
+- **Minimal permissions.** `activeTab`, `scripting`, `sidePanel`, `storage`, `alarms`, `identity`, and a host permission for `https://api.resend.com/*` only. There are no content scripts and no all-sites access at install. Per-site grants are optional and made by you from the panel.
+- **Nothing persists that should not.** Tokens and codes live in `chrome.storage.session`. Only preferences and the public OAuth client ID are stored locally. Nothing uses browser sync, telemetry, or remote code.
+- **Sender checks.** Each card shows Resend's SPF/DKIM/DMARC result. A sender that fails authentication cannot be filled, copied, or opened.
+- **Fresh codes only.** Codes older than three minutes are never offered. A filled or discarded message does not return.
+- **Email is data.** HTML is parsed, never rendered or executed. Recovery and payment emails are excluded. Sign-in links must be HTTPS, with no bare IP or punycode host, and only one labelled link per message.
 
-Sender addresses do not authenticate a sender. Resend's Inbox response does not expose the authentication evidence needed for unattended processing. Review remains mandatory. A compromised browser, extension update, or user device is outside this protection boundary.
+A sender address is not proof of identity, and a compromised browser or device is outside this boundary. Review the card before you fill. No independent security audit has been performed. See [SECURITY.md](SECURITY.md) to report a vulnerability.
 
-See [architecture](docs/ARCHITECTURE.md), [privacy and retention](docs/PRIVACY.md), and [API research, Gmail options, and comparable products](RESEARCH.md).
+## Resend API usage
 
-## Gmail
+| Endpoint                                    | Purpose                                      |
+| ------------------------------------------- | -------------------------------------------- |
+| `POST /oauth/register`                      | Register the public OAuth client (once)      |
+| `GET /oauth/authorize`, `POST /oauth/token` | Login with PKCE, refresh-token rotation      |
+| `POST /oauth/revoke`                        | Disconnect                                   |
+| `GET /inboxes`, `POST /inboxes`             | List or create an inbox                      |
+| `GET /inboxes/{id}/threads`                 | Find recent threads in the selected inbox    |
+| `GET /inboxes/{id}/threads/{thread}/emails` | Read recent messages in a thread             |
+| `GET /emails/receiving/{id}`                | Read the SPF/DKIM/DMARC result for a message |
 
-Direct Gmail access is not implemented. A consumer `@gmail.com` address cannot be provisioned as a Resend inbox on your verified domain. Gmail forwarding is a separate setup and may change the recipient fields Maildock matches, so it is not claimed as supported here. A future Gmail provider should use Google's own OAuth and API.
+Every response is validated with a schema before the rest of the extension sees it. Polling runs every three seconds while the panel is open and backs off on rate limits. Resend's documentation: [OAuth](https://resend.com/docs/guides/building-a-resend-oauth-client), [Inboxes](https://resend.com/docs/api-reference/inboxes/list-threads), [Receiving](https://resend.com/docs/dashboard/receiving/introduction).
 
-## Development and verification
+## Configuration
+
+Optional. Copy `.env.example` to `.env` for a stable distribution build:
+
+| Variable                   | Purpose                                                                                             |
+| -------------------------- | --------------------------------------------------------------------------------------------------- |
+| `WXT_RESEND_CLIENT_ID`     | A pre-registered public Resend client with callback `https://<extension-id>.chromiumapp.org/resend` |
+| `WXT_EXTENSION_PUBLIC_KEY` | The extension's public manifest key, to keep the development extension ID stable                    |
+
+Both values are public configuration. Never add a client secret, API key, or private signing key.
+
+## Development
 
 ```sh
-npm run check
-npx playwright install chromium
-npm run test:browser
-npm run zip
+npm run dev           # watch build; reload the extension after worker changes
+npm run check         # typecheck, lint, unused code, unit tests, production build, manifest audit
+npm run test:browser  # end-to-end tests against the built extension (run `npx playwright install chromium` once)
+npm run zip           # .output/maildock-<version>-chrome.zip
 ```
 
-`check` runs strict TypeScript, Biome, Knip unused-code analysis, six focused security tests, a production build, and permission/CSP checks. Browser tests exercise connection, token refresh, fresh-message matching, fill, navigation rejection, credential cleanup, and revocation against intercepted provider responses. They load the production artifact into a disposable profile, using Chrome's extension debugging protocol. Screenshots go to `artifacts/`; failure traces stay in ignored `test-results/`.
+Browser tests load the production build into a disposable Chrome profile and intercept Resend responses. They do not contact a live account. If the downloaded test browser cannot start, point `MAILDOCK_TEST_BROWSER` at a local Chrome executable.
 
-If the downloaded test browser cannot start, set `MAILDOCK_TEST_BROWSER` to a recent Chrome executable. Tests still create a separate temporary profile. On Windows:
+Project layout:
 
-```powershell
-$env:MAILDOCK_TEST_BROWSER = 'C:/Program Files/Google/Chrome/Application/chrome.exe'
-npm run test:browser
+```
+src/core/        state model, schemas, code and link extraction (no browser APIs)
+src/background/  service worker: commands, OAuth, Resend client, page filling
+src/ui/          side panel (React)
+scripts/         icon rendering and production manifest audit
+tests/           unit tests and Playwright browser tests
+docs/            architecture, privacy and retention, research notes
 ```
 
-`npm run zip` writes `.output/maildock-0.1.0-chrome.zip`. CI runs the checks and simulated browser flows without account secrets. `AGENTS.md` is the short entry point for coding agents; routine changes do not require reading the research report.
+Read [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for the trust boundaries and [docs/PRIVACY.md](docs/PRIVACY.md) for what is stored and for how long.
 
-## Live verification before release
+## Contributing
 
-Use a dedicated Resend account and test inbox. Verify the registered Chromium callback is accepted, a real fresh code arrives, refresh works after access-token expiry, and Disconnect removes access. Check actual provider payloads, quota behavior, DNS routing, browser restart, and offline revocation. Keep credentials out of chat, fixtures, screenshots, and traces. Complete independent security review and store privacy disclosures before public distribution.
+Contributions are welcome. Read [CONTRIBUTING.md](CONTRIBUTING.md) for setup, the rules every change must keep, and the pull request process. This project follows the [Contributor Covenant](CODE_OF_CONDUCT.md).
+
+## Scope and roadmap
+
+Resend is the only provider today. Gmail support, automatic submission, cross-frame filling, and credentials that survive a restart are separate changes. Open an issue to discuss one before you start.
+
+## License
+
+[MIT](LICENSE) © Om Pathak. The particle wordmark adapts [React Bits](https://github.com/DavidHDev/react-bits); its notice ships in `public/licenses/react-bits.txt`.

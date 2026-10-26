@@ -24,7 +24,7 @@ Chrome MV3 extension. TypeScript, React, WXT. No application backend.
 - Use explicit imports, descriptive names, and discriminated state. No speculative layers or generic repository patterns.
 - Comments only explain a non-obvious constraint. Prefer encoding it in a type or runtime check.
 - Do not add tests for getters or framework boilerplate. Test a security boundary or observable failure mode.
-- `RESEARCH.md` is background evidence, not required reading for routine edits.
+- `docs/RESEARCH.md` is background evidence, not required reading for routine edits.
 
 ## Commands
 

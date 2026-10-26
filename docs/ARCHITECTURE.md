@@ -59,7 +59,7 @@ Public OAuth uses `token_endpoint_auth_method: none`, S256 PKCE, random state, a
 
 OAuth requests and inbox API requests go directly to `api.resend.com`. Redirects, cookies, cache use, oversized responses, and unvalidated provider data are rejected. Rate limits honor bounded `Retry-After`; polling resumes only after the backoff. Message bodies exist only while matching; no attachments or links are downloaded.
 
-Sources: [OAuth](https://resend.com/docs/guides/building-a-resend-oauth-client), [registration](https://resend.com/docs/api-reference/oauth/register), [threads](https://resend.com/docs/api-reference/inboxes/list-threads), [thread emails](https://resend.com/docs/api-reference/inboxes/list-thread-emails), [Chrome storage](https://developer.chrome.com/docs/extensions/reference/api/storage). Detailed evidence and open provider questions are in `RESEARCH.md`.
+Sources: [OAuth](https://resend.com/docs/guides/building-a-resend-oauth-client), [registration](https://resend.com/docs/api-reference/oauth/register), [threads](https://resend.com/docs/api-reference/inboxes/list-threads), [thread emails](https://resend.com/docs/api-reference/inboxes/list-thread-emails), [Chrome storage](https://developer.chrome.com/docs/extensions/reference/api/storage). Detailed evidence and open provider questions are in `RESEARCH.md` in this directory.
 
 ## Maintenance
 

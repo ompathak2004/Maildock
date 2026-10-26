@@ -1,4 +1,3 @@
-import { mkdir } from 'node:fs/promises';
 import { resolve } from 'node:path';
 import {
   type BrowserContext,
@@ -192,8 +191,6 @@ test.afterEach(async () => {
 });
 
 test('connects, lists fresh mail, fills the allowed tab on request, and revokes access', async () => {
-  await mkdir('artifacts', { recursive: true });
-  await panel.screenshot({ path: 'artifacts/welcome.png', fullPage: true });
   await panel.getByLabel('I understand the account access').check();
   await panel.getByRole('button', { name: 'Continue with Resend' }).click();
   await expect(panel.getByText('Resend connected', { exact: true })).toBeVisible();
@@ -218,7 +215,6 @@ test('connects, lists fresh mail, fills the allowed tab on request, and revokes 
   await expect(panel.getByText('123456', { exact: true })).toBeVisible();
   await expect(panel.getByText('Verified sender')).toBeVisible();
   await expect(panel.getByRole('button', { name: 'Copy code' })).toBeEnabled();
-  await panel.screenshot({ path: 'artifacts/code-ready.png', fullPage: true });
   await grantTab();
   const polled = await command({ type: 'watch.poll' });
   if (!polled.ok || !polled.target) throw new Error('Target capture failed');

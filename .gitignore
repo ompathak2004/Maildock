@@ -9,4 +9,3 @@ test-results/
 playwright-report/
 .browser-profile/
 *.tsbuildinfo
-artifacts/

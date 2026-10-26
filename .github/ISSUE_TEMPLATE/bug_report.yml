@@ -1,0 +1,57 @@
+name: Bug report
+description: Something does not work as documented.
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for the report. Do not paste real codes, tokens, inbox contents, or account identifiers. Use a test inbox.
+        For a security problem, use the private channels in SECURITY.md instead of this form.
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened
+      description: What did you do, what did you expect, and what happened instead?
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to reproduce
+      placeholder: |
+        1. Open the panel on ...
+        2. Request a code on ...
+        3. Click ...
+    validations:
+      required: true
+  - type: input
+    id: website
+    attributes:
+      label: Website where the code was needed
+      placeholder: https://example.com/login
+  - type: input
+    id: version
+    attributes:
+      label: Maildock version or commit
+      placeholder: 0.1.0 or a commit SHA
+    validations:
+      required: true
+  - type: input
+    id: chrome
+    attributes:
+      label: Chrome version
+      placeholder: 131.0.6778.85
+    validations:
+      required: true
+  - type: textarea
+    id: panel
+    attributes:
+      label: Panel message
+      description: The exact error or notice shown in the Maildock panel, if any.
+  - type: checkboxes
+    id: checks
+    attributes:
+      label: Checks
+      options:
+        - label: I removed codes, tokens, email addresses, and message contents from this report.
+          required: true

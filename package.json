@@ -1,6 +1,17 @@
 {
   "name": "maildock",
   "version": "0.1.0",
+  "description": "Chrome extension that brings a fresh email verification code from your Resend inbox to the login page you choose.",
+  "license": "MIT",
+  "author": "Om Pathak <om2004.pathak@gmail.com>",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/ompathak2004/Maildock.git"
+  },
+  "bugs": {
+    "url": "https://github.com/ompathak2004/Maildock/issues"
+  },
+  "homepage": "https://github.com/ompathak2004/Maildock#readme",
   "private": true,
   "type": "module",
   "engines": {
