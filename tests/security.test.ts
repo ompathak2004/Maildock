@@ -69,6 +69,9 @@ describe('mailbox-to-website boundary', () => {
       ['Use code 123456 to verify https://example.com/verify?token=98765432', '123456'],
       ['Your verification code is 2026. Sent October 2026.', '2026'],
       ['Thanks for your order 48213 placed in 2026.', null],
+      ['Barcode: 12345678', null],
+      ['48213 is your order number', null],
+      ['Your code is G-123456.\nSupport:\n80012345', '123456'],
     ];
     for (const [text, code] of cases)
       expect(selectCandidate([email({ subject: null, text })], attempt, now), text).toEqual(

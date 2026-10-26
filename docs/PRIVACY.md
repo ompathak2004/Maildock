@@ -10,13 +10,13 @@ The chosen website receives only the code you explicitly approve for filling. Ma
 
 ## Browser storage
 
-| Data                                                                                       | Location                                           | Retention                                                                                                   |
-| ------------------------------------------------------------------------------------------ | -------------------------------------------------- | ----------------------------------------------------------------------------------------------------------- |
-| Public OAuth client ID, selected inbox ID, up to 100 origin/sender/code-length preferences | Extension local storage                            | Until extension data is cleared or it is uninstalled                                                        |
-| Access and refresh tokens                                                                  | Trusted extension session storage                  | Until successful disconnect, invalid authorization, browser restart, extension reload/disable, or uninstall |
-| Inbox list and selected attempt metadata                                                   | Trusted extension session storage                  | During the browser session; inbox list cleared on successful disconnect                                     |
-| Candidate code and selected subject/sender                                                 | Trusted extension session storage and panel memory | Active attempt only; discarded on completion, cancellation, expiry processing, or disconnection             |
-| Full message bodies                                                                        | Worker memory while fetching and matching          | Not deliberately persisted or logged                                                                        |
+| Data                                                                                                    | Location                                           | Retention                                                                                                   |
+| ------------------------------------------------------------------------------------------------------- | -------------------------------------------------- | ----------------------------------------------------------------------------------------------------------- |
+| Public OAuth client ID, selected inbox ID, up to 100 remembered origin/sender pairs from reviewed fills | Extension local storage                            | Until extension data is cleared or it is uninstalled                                                        |
+| Access and refresh tokens                                                                               | Trusted extension session storage                  | Until successful disconnect, invalid authorization, browser restart, extension reload/disable, or uninstall |
+| Inbox list and selected attempt metadata                                                                | Trusted extension session storage                  | During the browser session; inbox list cleared on successful disconnect                                     |
+| Candidate code and selected subject/sender                                                              | Trusted extension session storage and panel memory | Active attempt only; discarded on completion, cancellation, expiry processing, or disconnection             |
+| Full message bodies                                                                                     | Worker memory while fetching and matching          | Not deliberately persisted or logged                                                                        |
 
 Session storage is not an encrypted password vault. Credentials remain accessible to trusted code in this extension. The design does not protect against a compromised device, browser, or extension update. Browser/OS memory handling is outside Maildock's control.
 

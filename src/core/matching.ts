@@ -59,7 +59,7 @@ const keyword =
 const sensitive =
   /password\s*(?:reset|recovery)|reset\s+(?:your\s+)?password|account\s+recovery|(?:payment|transfer|withdrawal|deletion)\s+(?:code|confirmation)/i;
 
-// Tier 1 binds the token to a label ("code: 123456", "123456 is your code"). Tier 2 is a token
+// Tier 1 binds the token to a label ("code: 123456", "code is G-123456", "123456 is your code"). Tier 2 is a token
 // standing alone on its line, which is how most HTML templates render the code. Tier 3 only has a
 // keyword nearby. A year-like token needs a label because footers and dates are full of them.
 function tier(text: string, index: number, code: string): 1 | 2 | 3 | null {
@@ -68,8 +68,8 @@ function tier(text: string, index: number, code: string): 1 | 2 | 3 | null {
   const after = text.slice(end, end + 80);
   if (/https?:\/\/\S*$/i.test(before) || /[=/&#?]$/.test(before)) return null;
   if (
-    /(?:code|otp|passcode|pin)\b(?:\s+is)?[^a-z0-9]{0,12}$/i.test(before) ||
-    /^[^a-z0-9]{0,12}is\s+your\b/i.test(after)
+    /\b(?:code|otp|passcode|pin)\b(?:\s+is)?[^a-z0-9]{0,12}(?:\b[A-Z]{1,2}-)?$/i.test(before) ||
+    /^[^a-z0-9]{0,12}is\s+your\b[^.\n]{0,40}\b(?:code|otp|passcode|pin)\b/i.test(after)
   )
     return 1;
   if (/^(?:19|20)\d\d$/.test(code) || !keyword.test(before + after)) return null;
