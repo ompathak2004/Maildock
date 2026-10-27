@@ -8,7 +8,7 @@ Maildock is a Chrome extension that brings a fresh email verification code from 
 
 ## Demo
 
-https://github.com/user-attachments/assets/5bade745-f231-48fc-ba25-d6019a83edc6
+https://github.com/user-attachments/assets/b1a29e44-7913-4f11-b7d6-ccba37c2ad20
 
 ## How it works
 
