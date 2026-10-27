@@ -28,9 +28,6 @@ export default defineBackground(() => {
       );
     return true;
   });
-  chrome.action.onClicked.addListener((tab) => {
-    void chrome.sidePanel.open({ windowId: tab.windowId });
-  });
   chrome.alarms.onAlarm.addListener((alarm) => {
     if (alarm.name === 'watch-inbox') refresh();
   });

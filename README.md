@@ -4,7 +4,7 @@
 [![License: MIT](https://img.shields.io/badge/License-MIT-black.svg)](LICENSE)
 [![Chrome Manifest V3](https://img.shields.io/badge/Chrome-Manifest%20V3-black.svg)](https://developer.chrome.com/docs/extensions/develop/migrate/what-is-mv3)
 
-Maildock is a Chrome extension that brings a fresh email verification code from your [Resend](https://resend.com) inbox to the login page you are on. Open the side panel, request a code on the website, and click one button to fill it. No backend, no content scripts, no all-sites permission.
+Maildock is a Chrome extension that brings a fresh email verification code from your [Resend](https://resend.com) inbox to the login page you are on. Connect your inbox, close the panel, and review new codes in a compact toolbar popup. No backend, no content scripts, no all-sites permission.
 
 ## Demo
 
@@ -13,8 +13,8 @@ https://github.com/user-attachments/assets/5bade745-f231-48fc-ba25-d6019a83edc6
 ## How it works
 
 1. You sign in to a website with an address from a Resend inbox you own, for example `me@inbound.yourdomain.com`.
-2. Maildock watches that inbox while connected, even with the side panel closed. A toolbar badge counts fresh codes available for review. Click it to open the panel, which lists verification codes and sign-in links from the last three minutes.
-3. You click **Fill 123456 on example.com**. The service worker rechecks the tab, origin, and document, then fills the code. It never clicks Submit.
+2. Maildock watches that inbox while connected, even with the side panel closed. A compact toolbar popup opens once for each new code, with its sender, subject, and authentication result. The badge keeps a count if you close or miss the popup.
+3. You click **Fill code on example.com**. The service worker rechecks the tab, origin, and document, then fills the code. It never clicks Submit.
 
 Everything runs inside the extension. The service worker talks to the Resend API directly. The panel never sees tokens or full message bodies.
 
@@ -22,7 +22,7 @@ Everything runs inside the extension. The service worker talks to the Resend API
 
 Maildock is not on the Chrome Web Store yet. Build it from source.
 
-Requirements: Node.js 24 or newer, npm, and Chrome 120 or newer.
+Requirements: Node.js 24 or newer, npm, and Chrome 127 or newer.
 
 ```sh
 git clone https://github.com/ompathak2004/Maildock.git
@@ -50,11 +50,11 @@ Resend currently requires the `full_access` OAuth scope for inbox operations. Us
 
 ## Use it
 
-1. Click the Maildock icon to open the side panel and press **Continue with Resend**.
+1. Click the Maildock icon, choose **Connect inbox**, and press **Continue with Resend** in the side panel.
 2. Select the inbox to watch. You can close the panel and keep browsing.
-3. On the website, request a code. Maildock checks every 30 seconds in the background; Chrome may delay checks, especially during sleep. A badge on the pinned toolbar icon shows how many fresh codes are available. The badge contains no codes or email details and excludes messages that failed sender authentication.
-4. Click the Maildock toolbar button on the login page to review the code, sender, subject, and sender-authentication result. That click also lets Maildock fill that tab. Moving between pages on the same site keeps the permission.
-5. Check the sender and the site named on the button, then click **Fill … on <site>**.
+3. On the website, request a code. Maildock checks every 30 seconds in the background; Chrome may delay checks, especially during sleep. When a new code arrives, the toolbar popup opens if Chrome is focused and Maildock is not already open. Otherwise, the badge remains available. Failed sender checks and sign-in links never trigger the popup.
+4. Review the code and sender. On a site without permission, close the popup and click the Maildock toolbar icon on the login page to enable filling. Automatic popup opening does not grant page access. Moving between pages on the same site keeps a toolbar-click grant.
+5. Check the site named on the button, then click **Fill code on <site>**. Use **Open Maildock** for the full side panel, sign-in links, and account settings.
 
 Other things the panel does:
 

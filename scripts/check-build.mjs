@@ -5,6 +5,8 @@ import { join } from 'node:path';
 const root = '.output/chrome-mv3';
 const manifest = JSON.parse(await readFile(join(root, 'manifest.json'), 'utf8'));
 assert.equal(manifest.manifest_version, 3);
+assert.equal(manifest.minimum_chrome_version, '127');
+assert.equal(manifest.action.default_popup, 'popup.html');
 assert.deepEqual(manifest.host_permissions, ['https://api.resend.com/*']);
 assert.equal(manifest.content_scripts, undefined);
 assert.equal(manifest.externally_connectable, undefined);

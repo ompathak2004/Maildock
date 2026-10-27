@@ -11,13 +11,14 @@ Chrome MV3 extension. TypeScript, React, WXT. No application backend.
 - `src/core/matching.ts` owns code extraction and candidate selection without browser dependencies.
 - `src/background/page.ts` owns isolated-world inspection and filling.
 - `src/ui/App.tsx` owns the side panel. No provider calls from React.
+- `src/ui/Popup.tsx` owns the compact toolbar popup and explicit code actions.
 - `src/ui/ParticleWordmark.tsx` owns the bounded monochrome logo animation. It stops rendering at rest.
 - `src/ui/tokens.css` owns the monochrome palette. Keep visual assets local.
 - `docs/ARCHITECTURE.md` explains the trust boundaries and decisions.
 
 ## Invariants
 
-- Only this extension's side panel may send privileged commands. Never expose a content-script fetch proxy.
+- Only this extension's exact side panel and popup URLs may send privileged commands. Never expose a content-script fetch proxy.
 - Keep credentials, bodies, codes, and tokenized URLs out of logs, telemetry, browser sync, and persistent storage.
 - Never silently fill or submit. Recheck the target origin and document before releasing a code.
 - External JSON is untrusted until parsed. Pure domain functions accept validated types.

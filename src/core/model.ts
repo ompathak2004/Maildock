@@ -81,6 +81,7 @@ export type Candidate = z.infer<typeof candidateSchema>;
 export const watchSchema = z.object({
   items: z.array(candidateSchema).max(5),
   consumed: z.array(messageId).max(200),
+  announced: z.array(messageId).max(200).default([]),
   checkedAt: z.number(),
   nextPollAt: z.number(),
   note: z.string().nullable(),

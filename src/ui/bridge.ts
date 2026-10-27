@@ -6,7 +6,7 @@ export async function send(command: Command) {
   try {
     raw = await chrome.runtime.sendMessage(command);
   } catch {
-    throw new AppError('worker-unavailable', 'Maildock restarted. Reopen the panel and try again.');
+    throw new AppError('worker-unavailable', 'Maildock restarted. Reopen Maildock and try again.');
   }
   const parsed = responseSchema.safeParse(raw);
   if (!parsed.success)

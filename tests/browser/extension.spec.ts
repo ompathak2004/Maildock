@@ -52,6 +52,28 @@ async function grantTab() {
   await browser.detach();
 }
 
+async function tick(at: number) {
+  await worker.evaluate(async (time) => {
+    Date.now = () => time;
+    await chrome.alarms.create('watch-inbox', {
+      delayInMinutes: 0.001,
+      periodInMinutes: 0.5,
+    });
+  }, at);
+  await expect
+    .poll(() =>
+      worker.evaluate(async () => (await chrome.alarms.get('watch-inbox'))?.scheduledTime),
+    )
+    .toBeGreaterThan(Date.now() + 5000);
+  await worker.evaluate(() => navigator.locks.request('maildock-state', () => undefined));
+}
+
+async function watch() {
+  return watchSchema.parse(
+    await worker.evaluate(async () => (await chrome.storage.session.get('watch')).watch),
+  );
+}
+
 test.beforeEach(async () => {
   deliveredAt = null;
   revoked = false;
@@ -70,7 +92,7 @@ test.beforeEach(async () => {
     headless: true,
     ignoreDefaultArgs: ['--disable-extensions'],
     args: ['--enable-unsafe-extension-debugging'],
-    viewport: { width: 390, height: 900 },
+    viewport: null,
   });
   const loader = await context.browser()?.newBrowserCDPSession();
   if (!loader) throw new Error('The browser does not expose an extension loading session');
@@ -367,7 +389,7 @@ test('blocks a sender that failed authentication and opens a sign-in link only o
   await expect(panel.getByText('Sender check unavailable')).toBeVisible();
   expect(await worker.evaluate(() => chrome.action.getBadgeText({}))).toBe('');
   await expect(panel.getByText('login.example.test', { exact: true })).toBeVisible();
-  const pagesBefore = context.pages().length;
+  const pagesBefore = await worker.evaluate(async () => (await chrome.tabs.query({})).length);
   // A tab created by the worker can start loading before Playwright attaches its route, so the
   // navigation is observed through the request log rather than the final document.
   const requested: string[] = [];
@@ -380,38 +402,64 @@ test('blocks a sender that failed authentication and opens a sign-in link only o
   await expect
     .poll(() => requested)
     .toContain('https://login.example.test/magic?token=secret-token-value');
-  expect(context.pages().length).toBe(pagesBefore + 1);
+  expect(await worker.evaluate(async () => (await chrome.tabs.query({})).length)).toBe(
+    pagesBefore + 1,
+  );
   const after = await command({ type: 'watch.poll' });
   expect(after.ok && after.state.watch.items).toEqual([]);
 });
 
-test('receives a code with the panel closed and fills only on request', async () => {
+test('opens a native popup for a background code and fills only after a toolbar grant and click', async () => {
   expect((await command({ type: 'auth.connect' })).ok).toBe(true);
   await panel.close();
-  const pagesBefore = context.pages().length;
+  await website.bringToFront();
+  const arriving = context.waitForEvent('page', { timeout: 35_000 });
   deliveredAt = new Date().toISOString();
-  await expect
-    .poll(() => worker.evaluate(() => chrome.action.getBadgeText({})), { timeout: 35_000 })
-    .toBe('1');
+  const popup = await arriving;
+  await popup.waitForURL(`chrome-extension://${id}/popup.html`);
+  await expect(popup.getByRole('heading', { name: 'Your code is ready' })).toBeVisible();
+  await expect(popup.getByText('123456', { exact: true })).toBeVisible();
+  await expect(popup.getByText('accounts@example.com', { exact: true })).toBeVisible();
+  await expect(popup.getByRole('button', { name: 'Fill code', exact: true })).toBeDisabled();
+  await expect.poll(() => worker.evaluate(() => chrome.action.getBadgeText({}))).toBe('1');
   expect(await worker.evaluate(() => chrome.action.getTitle({}))).toBe(
     'Maildock: 1 code available',
   );
-  expect(context.pages().length).toBe(pagesBefore);
   await expect(website.locator('#otp')).toHaveValue('');
   await expect(website.locator('body')).not.toHaveAttribute('data-submitted', 'true');
 
+  await popup.getByRole('button', { name: 'Close', exact: true }).click();
+  await expect.poll(() => popup.isClosed()).toBe(true);
+  const nextPoll = Date.now() + 5000;
+  await tick(nextPoll);
+  await expect.poll(async () => (await watch()).checkedAt).toBe(nextPoll);
+  await worker.evaluate(() => navigator.locks.request('maildock-state', () => undefined));
+  expect(
+    await worker.evaluate(() =>
+      chrome.runtime.getContexts({ contextTypes: [chrome.runtime.ContextType.POPUP] }),
+    ),
+  ).toEqual([]);
+  const reopened = context.waitForEvent('page');
   await grantTab();
-  panel = await context.newPage();
-  await panel.goto(`chrome-extension://${id}/sidepanel.html`);
-  await website.bringToFront();
-  await expect(panel.getByText('123456', { exact: true })).toBeVisible();
-  await expect(
-    panel.getByRole('button', { name: 'Fill 123456 on login.example.test' }),
-  ).toBeEnabled();
-  await panel.getByRole('button', { name: 'Fill 123456 on login.example.test' }).click();
+  const permitted = await reopened;
+  await permitted.waitForURL(`chrome-extension://${id}/popup.html`);
+  const fill = permitted.getByRole('button', { name: 'Fill code on login.example.test' });
+  await expect(fill).toBeEnabled();
+  await permitted.screenshot({ path: 'test-results/popup-light.png' });
+  await permitted.emulateMedia({ colorScheme: 'dark' });
+  await expect(fill).toHaveCSS('background-color', 'rgb(238, 238, 238)');
+  await permitted.screenshot({ path: 'test-results/popup-dark.png' });
+  await fill.click();
+  await expect(permitted.getByRole('heading', { name: 'Code filled' })).toBeVisible();
   await expect(website.locator('#otp')).toHaveValue('123456');
   await expect.poll(() => worker.evaluate(() => chrome.action.getBadgeText({}))).toBe('');
   await expect(website.locator('body')).not.toHaveAttribute('data-submitted', 'true');
+  const openedPanel = context.waitForEvent('page');
+  await permitted.getByRole('button', { name: 'Open Maildock' }).click();
+  const sidePanel = await openedPanel;
+  await sidePanel.waitForURL(`chrome-extension://${id}/sidepanel.html`);
+  await expect(sidePanel.getByRole('heading', { name: 'You’re ready to continue.' })).toBeVisible();
+  await expect.poll(() => permitted.isClosed()).toBe(true);
 });
 
 test('expires a background badge during backoff, recovers, and clears it on revoked access', async () => {
@@ -419,19 +467,6 @@ test('expires a background badge during backoff, recovers, and clears it on revo
   await panel.close();
   const now = Date.now();
   deliveredAt = new Date(now - 170_000).toISOString();
-  const tick = async (at: number) => {
-    await worker.evaluate(async (time) => {
-      Date.now = () => time;
-      await chrome.alarms.create('watch-inbox', {
-        delayInMinutes: 0.001,
-        periodInMinutes: 0.5,
-      });
-    }, at);
-  };
-  const watch = async () =>
-    watchSchema.parse(
-      await worker.evaluate(async () => (await chrome.storage.session.get('watch')).watch),
-    );
   await tick(now);
   await expect.poll(() => worker.evaluate(() => chrome.action.getBadgeText({}))).toBe('1');
 
@@ -468,6 +503,112 @@ test('expires a background badge during backoff, recovers, and clears it on revo
     )
     .toBeGreaterThan(Date.now() + 5000);
   expect(mailboxRequests).toBe(requestsAfterRevocation);
+});
+
+test('offers one-click filling in an automatic popup when the page is already allowed', async () => {
+  const opened = context.waitForEvent('page');
+  await grantTab();
+  const initial = await opened;
+  await initial.waitForURL(`chrome-extension://${id}/popup.html`);
+  const openedPanel = context.waitForEvent('page');
+  await initial.getByRole('button', { name: 'Connect inbox' }).click();
+  const sidePanel = await openedPanel;
+  await sidePanel.waitForURL(`chrome-extension://${id}/sidepanel.html`);
+  await sidePanel.getByLabel('I understand the account access').check();
+  await sidePanel.getByRole('button', { name: 'Continue with Resend' }).click();
+  await expect(sidePanel.getByText('Resend connected', { exact: true })).toBeVisible();
+  await panel.close();
+  await worker.evaluate(async () => {
+    const window = await chrome.windows.getLastFocused();
+    if (window.id === undefined) throw new Error('No window to close');
+    await chrome.sidePanel.close({ windowId: window.id });
+  });
+  await expect
+    .poll(() =>
+      worker.evaluate(() =>
+        chrome.runtime.getContexts({ contextTypes: [chrome.runtime.ContextType.SIDE_PANEL] }),
+      ),
+    )
+    .toEqual([]);
+  await website.bringToFront();
+  deliveredAt = new Date().toISOString();
+  const arriving = context.waitForEvent('page');
+  await tick(Date.now() + 5000);
+  const popup = await arriving;
+  await popup.waitForURL(`chrome-extension://${id}/popup.html`);
+  const fill = popup.getByRole('button', { name: 'Fill code on login.example.test' });
+  await expect(fill).toBeEnabled();
+  await expect(website.locator('#otp')).toHaveValue('');
+  await fill.click();
+  await expect(website.locator('#otp')).toHaveValue('123456');
+  await expect(website.locator('body')).not.toHaveAttribute('data-submitted', 'true');
+  await expect.poll(() => worker.evaluate(() => chrome.action.getBadgeText({}))).toBe('');
+});
+
+test('keeps the badge usable when Chrome refuses the popup without repeatedly trying', async () => {
+  expect((await command({ type: 'auth.connect' })).ok).toBe(true);
+  await panel.close();
+  await website.bringToFront();
+  await worker.evaluate(() => {
+    let attempts = 0;
+    Object.defineProperty(globalThis, 'popupAttempts', { get: () => attempts });
+    Object.defineProperty(chrome.action, 'openPopup', {
+      value: async () => {
+        attempts++;
+        throw new Error('Another popup is open');
+      },
+    });
+  });
+  const now = Date.now();
+  deliveredAt = new Date(now).toISOString();
+  await tick(now);
+  const attempts = () =>
+    worker.evaluate(() => (globalThis as unknown as { popupAttempts: number }).popupAttempts);
+  await expect.poll(attempts).toBe(1);
+  expect(await worker.evaluate(() => chrome.action.getBadgeText({}))).toBe('1');
+  await tick(now + 5000);
+  await expect.poll(async () => (await watch()).checkedAt).toBe(now + 5000);
+  await worker.evaluate(() => navigator.locks.request('maildock-state', () => undefined));
+  expect(await attempts()).toBe(1);
+  await expect(website.locator('#otp')).toHaveValue('');
+  const opened = context.waitForEvent('page');
+  await grantTab();
+  const popup = await opened;
+  await popup.waitForURL(`chrome-extension://${id}/popup.html`);
+  await expect(popup.getByText('123456', { exact: true })).toBeVisible();
+  await popup.getByRole('button', { name: 'Dismiss code' }).click();
+  await expect.poll(() => worker.evaluate(() => chrome.action.getBadgeText({}))).toBe('');
+  await expect(popup.getByText('123456', { exact: true })).toHaveCount(0);
+});
+
+test('does not open automatic previews for failed sender checks or sign-in links', async () => {
+  expect((await command({ type: 'auth.connect' })).ok).toBe(true);
+  await panel.close();
+  await website.bringToFront();
+  const now = Date.now();
+  authentication = { spf: 'fail', dkim: 'fail', dmarc: 'fail' };
+  deliveredAt = new Date(now).toISOString();
+  await tick(now);
+  await expect.poll(async () => (await watch()).items[0]?.check).toBe('fail');
+  await worker.evaluate(() => navigator.locks.request('maildock-state', () => undefined));
+  expect(
+    await worker.evaluate(() =>
+      chrome.runtime.getContexts({ contextTypes: [chrome.runtime.ContextType.POPUP] }),
+    ),
+  ).toEqual([]);
+  expect(await worker.evaluate(() => chrome.action.getBadgeText({}))).toBe('');
+  authentication = { spf: 'pass', dkim: 'pass', dmarc: 'pass' };
+  mail = 'link';
+  await tick(now + 5000);
+  await expect.poll(async () => (await watch()).items[0]?.kind).toBe('link');
+  await worker.evaluate(() => navigator.locks.request('maildock-state', () => undefined));
+  expect(
+    await worker.evaluate(() =>
+      chrome.runtime.getContexts({ contextTypes: [chrome.runtime.ContextType.POPUP] }),
+    ),
+  ).toEqual([]);
+  expect(await worker.evaluate(() => chrome.action.getBadgeText({}))).toBe('');
+  await expect(website.locator('#otp')).toHaveValue('');
 });
 
 test('clears code badges on dismissal, inbox selection and disconnect', async () => {

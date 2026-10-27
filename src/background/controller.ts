@@ -26,6 +26,7 @@ import {
 const idleWatch: Watch = {
   items: [],
   consumed: [],
+  announced: [],
   checkedAt: 0,
   nextPollAt: 0,
   note: null,
@@ -55,9 +56,10 @@ async function state(): Promise<ViewState> {
   return { connected: !!auth, inboxes: auth ? inboxes : [], settings: preferences, watch };
 }
 
-async function updateBadge(): Promise<void> {
+async function updateAction(): Promise<void> {
   const { watch } = await state();
-  const count = watch.items.filter((item) => item.kind === 'code' && item.check !== 'fail').length;
+  const codes = watch.items.filter((item) => item.kind === 'code' && item.check !== 'fail');
+  const count = codes.length;
   await Promise.all([
     chrome.action.setBadgeText({ text: count ? String(count) : '' }),
     chrome.action.setTitle({
@@ -66,6 +68,27 @@ async function updateBadge(): Promise<void> {
         : 'Open Maildock',
     }),
   ]);
+  const arrivals = codes.filter((item) => !watch.announced.includes(item.messageId));
+  if (!arrivals.length) return;
+  await saveWatch({
+    ...watch,
+    announced: [...watch.announced, ...arrivals.map((item) => item.messageId)].slice(-200),
+  });
+  try {
+    const [window, contexts] = await Promise.all([
+      chrome.windows.getLastFocused({ windowTypes: ['normal'] }),
+      chrome.runtime.getContexts({
+        documentUrls: [
+          chrome.runtime.getURL('sidepanel.html'),
+          chrome.runtime.getURL('popup.html'),
+        ],
+      }),
+    ]);
+    if (!window.focused || window.id === undefined || contexts.length) return;
+    await chrome.action.openPopup({ windowId: window.id });
+  } catch {
+    return;
+  }
 }
 
 export async function pollInbox(): Promise<void> {
@@ -81,7 +104,7 @@ export async function pollInbox(): Promise<void> {
           note: publicError(error).error,
         });
     } finally {
-      await updateBadge();
+      await updateAction();
     }
   });
 }
@@ -215,7 +238,8 @@ async function execute(command: Command): Promise<Response> {
       if (!(await getInboxes()).some((value) => value.id === command.inboxId))
         throw new AppError('no-inbox', 'That inbox is no longer available. Refresh the list.');
       // Message IDs are unique across inboxes, so consumption survives switching inboxes.
-      await saveWatch({ ...idleWatch, consumed: (await state()).watch.consumed });
+      const { consumed, announced } = (await state()).watch;
+      await saveWatch({ ...idleWatch, consumed, announced });
       await saveSettings({ ...(await getSettings()), selectedInboxId: command.inboxId });
       break;
     }
@@ -248,11 +272,12 @@ async function execute(command: Command): Promise<Response> {
 export function isTrustedSender(
   sender: chrome.runtime.MessageSender,
   extensionId: string,
-  panelUrl: string,
+  uiUrls: readonly string[],
 ): boolean {
   return (
     sender.id === extensionId &&
-    sender.url === panelUrl &&
+    sender.url !== undefined &&
+    uiUrls.includes(sender.url) &&
     sender.origin === `chrome-extension://${extensionId}` &&
     (sender.frameId === undefined || sender.frameId === 0)
   );
@@ -262,7 +287,12 @@ export async function handleMessage(
   raw: unknown,
   sender: chrome.runtime.MessageSender,
 ): Promise<Response> {
-  if (!isTrustedSender(sender, chrome.runtime.id, chrome.runtime.getURL('sidepanel.html')))
+  if (
+    !isTrustedSender(sender, chrome.runtime.id, [
+      chrome.runtime.getURL('sidepanel.html'),
+      chrome.runtime.getURL('popup.html'),
+    ])
+  )
     return { ok: false, code: 'untrusted-sender', error: 'This request is not permitted.' };
   const parsed = commandSchema.safeParse(raw);
   if (!parsed.success)
@@ -272,7 +302,7 @@ export async function handleMessage(
       try {
         return await execute(parsed.data);
       } finally {
-        await updateBadge();
+        await updateAction();
       }
     });
   } catch (error) {

@@ -216,18 +216,26 @@ describe('mailbox-to-website boundary', () => {
 });
 
 describe('extension authorization boundary', () => {
-  it('accepts only the exact extension panel sender', () => {
+  it('accepts only the exact extension panel and popup senders', () => {
     const url = 'chrome-extension://maildock/sidepanel.html';
+    const popupUrl = 'chrome-extension://maildock/popup.html';
+    const uiUrls = [url, popupUrl];
     const trusted = { id: 'maildock', url, origin: 'chrome-extension://maildock' };
-    expect(isTrustedSender(trusted, 'maildock', url)).toBe(true);
+    expect(isTrustedSender(trusted, 'maildock', uiUrls)).toBe(true);
+    expect(isTrustedSender({ ...trusted, url: popupUrl }, 'maildock', uiUrls)).toBe(true);
     for (const sender of [
       { ...trusted, id: 'other' },
       { ...trusted, url: 'https://evil.test' },
       { ...trusted, origin: 'https://evil.test' },
       { ...trusted, url: `${url}?spoof=1` },
+      { ...trusted, url: `${popupUrl}?spoof=1` },
+      { ...trusted, url: `${popupUrl}#spoof` },
+      { ...trusted, url: 'chrome-extension://maildock/other.html' },
       { ...trusted, frameId: 1 },
     ]) {
-      expect(isTrustedSender(sender as chrome.runtime.MessageSender, 'maildock', url)).toBe(false);
+      expect(isTrustedSender(sender as chrome.runtime.MessageSender, 'maildock', uiUrls)).toBe(
+        false,
+      );
     }
     expect(commandSchema.safeParse({ type: 'fetch', url: 'https://evil.test' }).success).toBe(
       false,

@@ -6,22 +6,15 @@ import {
   type Command,
   emailAddress,
   inboxId,
-  type SenderCheck,
   type Target,
   type ViewState,
 } from '../core/model';
 import { send } from './bridge';
 import { ParticleWordmark } from './ParticleWordmark';
+import { checkLabel } from './presentation';
 
 const allowHint =
   'Open the page with the code field, then click the Maildock toolbar icon to allow filling on that tab.';
-
-const checkLabel: Record<SenderCheck, { text: string; tone: string }> = {
-  pass: { text: 'Verified sender', tone: 'ok' },
-  gray: { text: 'Sender not verified', tone: 'warn' },
-  fail: { text: 'Sender check failed', tone: 'bad' },
-  unknown: { text: 'Sender check unavailable', tone: 'warn' },
-};
 
 // Sites the user allowed permanently through chrome.permissions; filling there needs no toolbar
 // click. Managed from the panel so the grant and its removal are both explicit user gestures.
@@ -367,8 +360,8 @@ export function App() {
                 <p>New verification emails to {selected.email_address} appear here.</p>
                 <p className="fine-print">
                   You can close this panel. Maildock checks every 30 seconds in the background,
-                  though Chrome may delay checks. Pin the toolbar icon to see the code badge, then
-                  click it to review and fill.
+                  though Chrome may delay checks. A compact popup opens when a new code arrives. Pin
+                  the toolbar icon to reopen it if you miss it.
                 </p>
                 {watch.note && <p className="notice">{watch.note}</p>}
                 <div className="watch-bottom">

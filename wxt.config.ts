@@ -7,7 +7,7 @@ export default defineConfig({
   manifest: {
     name: 'Maildock',
     description: 'Bring email verification codes to the tab where you need them.',
-    minimum_chrome_version: '120',
+    minimum_chrome_version: '127',
     permissions: ['identity', 'storage', 'activeTab', 'scripting', 'sidePanel', 'alarms'],
     host_permissions: ['https://api.resend.com/*'],
     // Granted per site by the user from the panel; never requested at install time.
