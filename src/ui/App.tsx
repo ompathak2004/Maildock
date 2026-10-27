@@ -365,6 +365,11 @@ export function App() {
                 <p className="eyebrow">Watching your inbox</p>
                 <h2>Request your code on the website.</h2>
                 <p>New verification emails to {selected.email_address} appear here.</p>
+                <p className="fine-print">
+                  You can close this panel. Maildock checks every 30 seconds in the background,
+                  though Chrome may delay checks. Pin the toolbar icon to see the code badge, then
+                  click it to review and fill.
+                </p>
                 {watch.note && <p className="notice">{watch.note}</p>}
                 <div className="watch-bottom">
                   <span>

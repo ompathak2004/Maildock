@@ -28,18 +28,20 @@ TypeScript supplies shared domain types, Zod validates network/storage/message b
 | `background/resend.ts`      | Provider schemas, inbox operations, bounded pagination                                         |
 | `background/storage.ts`     | Local preferences and trusted session state                                                    |
 | `background/page.ts`        | Top-frame inspection and document-bound isolated-world fill                                    |
-| `entrypoints/background.ts` | Browser event wiring and expiry alarm                                                          |
+| `entrypoints/background.ts` | Browser event wiring and inbox polling alarm                                                   |
 | `ui/App.tsx`                | Panel interactions and active polling; no provider credentials                                 |
 
 Only messages from our exact bundled panel URL, extension ID, extension origin, and top frame are accepted. The same document may be opened in an extension tab for automation. Browser-supplied sender identity is checked before command parsing. The manifest exposes no web-accessible resources or external message channel.
 
 ## State and concurrency
 
-One installation has one inbox watch. It holds at most five fresh codes, the IDs of consumed messages, poll timing, a transient provider note, and the last fill confirmation. Nothing is started or stopped by the user: codes appear while the panel polls and leave when they fall out of the three-minute window, are filled, or are discarded. A transient network error keeps the last successful list and shows the note. Navigation never changes this state because the page is resolved at fill time, not at watch time.
+One installation has one inbox watch. It holds at most five fresh codes, the IDs of consumed messages, poll timing, a transient provider note, and the last fill confirmation. Connecting enables inbox checks even while the panel is closed. Codes leave when they fall out of the three-minute window, are filled, or are discarded. A transient network error keeps the last successful list and shows the note. Navigation never changes this state because the page is resolved at fill time, not at watch time.
 
 The `maildock-state` Web Lock serializes commands and expiry work across panels. `maildock-auth` serializes authentication and refresh-token rotation. These locks are worker-local coordination primitives, not a distributed lock across devices. Only the worker accesses tokens. A lost response during refresh can require reconnection; stale tokens are never reused after a confirmed invalid grant.
 
-The watch survives worker suspension through session storage, but not a browser restart or extension reload. The panel requests polls every three seconds while connected; the worker independently enforces the next permissible poll time. A 30-second alarm prunes stale codes while the panel is closed. No short-interval daemon relies on the worker remaining alive.
+The watch survives worker suspension through session storage, but not a browser restart or extension reload. The panel requests polls every three seconds while connected; the worker independently enforces the next permissible poll time. A 30-second alarm also polls the inbox and prunes stale codes without requiring an open panel. Worker startup checks for the alarm without resetting an existing schedule, then refreshes the watch. Commands and background polls share the state lock and backoff. Chrome may delay alarms; this is not a real-time delivery guarantee. No short-interval daemon relies on the worker remaining alive.
+
+The toolbar badge is derived from fresh code candidates whose sender check is not `fail`; sign-in links do not increment it. It is a count for review, not a claim that a code belongs to the current website. Badge text and tooltip contain no codes, subjects, senders, or URLs. Commands and background polls reconcile the badge even after errors, so expiration or lost authorization removes stale counts. Background polling never captures a page, opens the panel, or fills a field. Clicking the toolbar opens the existing panel; filling remains an explicit panel action.
 
 ## Mail and page binding
 

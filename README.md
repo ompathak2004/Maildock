@@ -13,7 +13,7 @@ https://github.com/user-attachments/assets/5bade745-f231-48fc-ba25-d6019a83edc6
 ## How it works
 
 1. You sign in to a website with an address from a Resend inbox you own, for example `me@inbound.yourdomain.com`.
-2. Maildock watches that inbox while the side panel is open and lists any verification code or sign-in link that arrived in the last three minutes.
+2. Maildock watches that inbox while connected, even with the side panel closed. A toolbar badge counts fresh codes available for review. Click it to open the panel, which lists verification codes and sign-in links from the last three minutes.
 3. You click **Fill 123456 on example.com**. The service worker rechecks the tab, origin, and document, then fills the code. It never clicks Submit.
 
 Everything runs inside the extension. The service worker talks to the Resend API directly. The panel never sees tokens or full message bodies.
@@ -51,9 +51,9 @@ Resend currently requires the `full_access` OAuth scope for inbox operations. Us
 ## Use it
 
 1. Click the Maildock icon to open the side panel and press **Continue with Resend**.
-2. Select the inbox to watch.
-3. On the website, request a code. The code appears in the panel within a few seconds, with the sender, subject, and Resend's sender-authentication result.
-4. Click the Maildock toolbar button once on the login page. That click lets Maildock fill that tab. Moving between pages on the same site keeps the permission.
+2. Select the inbox to watch. You can close the panel and keep browsing.
+3. On the website, request a code. Maildock checks every 30 seconds in the background; Chrome may delay checks, especially during sleep. A badge on the pinned toolbar icon shows how many fresh codes are available. The badge contains no codes or email details and excludes messages that failed sender authentication.
+4. Click the Maildock toolbar button on the login page to review the code, sender, subject, and sender-authentication result. That click also lets Maildock fill that tab. Moving between pages on the same site keeps the permission.
 5. Check the sender and the site named on the button, then click **Fill … on <site>**.
 
 Other things the panel does:
@@ -88,7 +88,7 @@ A sender address is not proof of identity, and a compromised browser or device i
 | `GET /inboxes/{id}/threads/{thread}/emails` | Read recent messages in a thread             |
 | `GET /emails/receiving/{id}`                | Read the SPF/DKIM/DMARC result for a message |
 
-Every response is validated with a schema before the rest of the extension sees it. Polling runs every three seconds while the panel is open and backs off on rate limits. Resend's documentation: [OAuth](https://resend.com/docs/guides/building-a-resend-oauth-client), [Inboxes](https://resend.com/docs/api-reference/inboxes/list-threads), [Receiving](https://resend.com/docs/dashboard/receiving/introduction).
+Every response is validated with a schema before the rest of the extension sees it. Polling runs every three seconds while the panel is open, with a 30-second background alarm while it is closed. Both share the same rate-limit backoff. The badge clears when codes are filled, dismissed, expired, or the connection ends. Resend's documentation: [OAuth](https://resend.com/docs/guides/building-a-resend-oauth-client), [Inboxes](https://resend.com/docs/api-reference/inboxes/list-threads), [Receiving](https://resend.com/docs/dashboard/receiving/introduction).
 
 ## Configuration
 

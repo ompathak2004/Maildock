@@ -7,7 +7,7 @@ import {
   test,
   type Worker,
 } from '@playwright/test';
-import { authSchema, type Command, responseSchema } from '../../src/core/model';
+import { authSchema, type Command, responseSchema, watchSchema } from '../../src/core/model';
 
 const inbox = {
   id: '00eac4f6-401a-4429-84cf-c086cab6b68f',
@@ -27,6 +27,8 @@ let refreshes: number;
 let revokedUpstream: boolean;
 let authentication: { spf: string; dkim: string; dmarc: string } | null;
 let mail: 'code' | 'link';
+let mailboxRequests: number;
+let rateLimited: boolean;
 const linkId = 'f5ddee04-8643-4e3f-9c13-e21b6c2dbfff';
 
 async function command(value: Command) {
@@ -57,6 +59,8 @@ test.beforeEach(async () => {
   revokedUpstream = false;
   authentication = { spf: 'pass', dkim: 'pass', dmarc: 'pass' };
   mail = 'code';
+  mailboxRequests = 0;
+  rateLimited = false;
   const extension = resolve('.output/chrome-mv3');
   context = await chromium.launchPersistentContext('', {
     channel: 'chromium',
@@ -76,6 +80,17 @@ test.beforeEach(async () => {
   id = new URL(worker.url()).host;
   await context.route('https://api.resend.com/**', async (route) => {
     const path = new URL(route.request().url()).pathname;
+    if (path === `/inboxes/${inbox.id}/threads`) {
+      mailboxRequests++;
+      if (rateLimited) {
+        await route.fulfill({
+          status: 429,
+          headers: { 'Retry-After': '60' },
+          json: { message: 'Too many requests' },
+        });
+        return;
+      }
+    }
     if (revokedUpstream && path.startsWith('/inboxes/')) {
       await route.fulfill({ status: 401, json: { message: 'Unauthorized' } });
       return;
@@ -214,6 +229,7 @@ test('connects, lists fresh mail, fills the allowed tab on request, and revokes 
   });
   await expect(panel.getByText('123456', { exact: true })).toBeVisible();
   await expect(panel.getByText('Verified sender')).toBeVisible();
+  expect(await worker.evaluate(() => chrome.action.getBadgeText({}))).toBe('1');
   await expect(panel.getByRole('button', { name: 'Copy code' })).toBeEnabled();
   await grantTab();
   const polled = await command({ type: 'watch.poll' });
@@ -229,6 +245,7 @@ test('connects, lists fresh mail, fills the allowed tab on request, and revokes 
     target: polled.target,
   });
   expect(filled.ok).toBe(true);
+  expect(await worker.evaluate(() => chrome.action.getBadgeText({}))).toBe('');
   await expect(website.locator('#otp')).toHaveValue('123456');
   await expect(website.locator('body')).not.toHaveAttribute('data-submitted', 'true');
   const again = await command({ type: 'watch.poll' });
@@ -321,6 +338,7 @@ test('blocks a sender that failed authentication and opens a sign-in link only o
   const blocked = polled.state.watch.items[0];
   if (blocked?.kind !== 'code') throw new Error('Code not listed');
   expect(blocked.check).toBe('fail');
+  expect(await worker.evaluate(() => chrome.action.getBadgeText({}))).toBe('');
   const refused = await command({
     type: 'watch.fill',
     messageId: blocked.messageId,
@@ -347,6 +365,7 @@ test('blocks a sender that failed authentication and opens a sign-in link only o
     })
     .toMatchObject({ kind: 'link', check: 'unknown' });
   await expect(panel.getByText('Sender check unavailable')).toBeVisible();
+  expect(await worker.evaluate(() => chrome.action.getBadgeText({}))).toBe('');
   await expect(panel.getByText('login.example.test', { exact: true })).toBeVisible();
   const pagesBefore = context.pages().length;
   // A tab created by the worker can start loading before Playwright attaches its route, so the
@@ -364,4 +383,116 @@ test('blocks a sender that failed authentication and opens a sign-in link only o
   expect(context.pages().length).toBe(pagesBefore + 1);
   const after = await command({ type: 'watch.poll' });
   expect(after.ok && after.state.watch.items).toEqual([]);
+});
+
+test('receives a code with the panel closed and fills only on request', async () => {
+  expect((await command({ type: 'auth.connect' })).ok).toBe(true);
+  await panel.close();
+  const pagesBefore = context.pages().length;
+  deliveredAt = new Date().toISOString();
+  await expect
+    .poll(() => worker.evaluate(() => chrome.action.getBadgeText({})), { timeout: 35_000 })
+    .toBe('1');
+  expect(await worker.evaluate(() => chrome.action.getTitle({}))).toBe(
+    'Maildock: 1 code available',
+  );
+  expect(context.pages().length).toBe(pagesBefore);
+  await expect(website.locator('#otp')).toHaveValue('');
+  await expect(website.locator('body')).not.toHaveAttribute('data-submitted', 'true');
+
+  await grantTab();
+  panel = await context.newPage();
+  await panel.goto(`chrome-extension://${id}/sidepanel.html`);
+  await website.bringToFront();
+  await expect(panel.getByText('123456', { exact: true })).toBeVisible();
+  await expect(
+    panel.getByRole('button', { name: 'Fill 123456 on login.example.test' }),
+  ).toBeEnabled();
+  await panel.getByRole('button', { name: 'Fill 123456 on login.example.test' }).click();
+  await expect(website.locator('#otp')).toHaveValue('123456');
+  await expect.poll(() => worker.evaluate(() => chrome.action.getBadgeText({}))).toBe('');
+  await expect(website.locator('body')).not.toHaveAttribute('data-submitted', 'true');
+});
+
+test('expires a background badge during backoff, recovers, and clears it on revoked access', async () => {
+  expect((await command({ type: 'auth.connect' })).ok).toBe(true);
+  await panel.close();
+  const now = Date.now();
+  deliveredAt = new Date(now - 170_000).toISOString();
+  const tick = async (at: number) => {
+    await worker.evaluate(async (time) => {
+      Date.now = () => time;
+      await chrome.alarms.create('watch-inbox', {
+        delayInMinutes: 0.001,
+        periodInMinutes: 0.5,
+      });
+    }, at);
+  };
+  const watch = async () =>
+    watchSchema.parse(
+      await worker.evaluate(async () => (await chrome.storage.session.get('watch')).watch),
+    );
+  await tick(now);
+  await expect.poll(() => worker.evaluate(() => chrome.action.getBadgeText({}))).toBe('1');
+
+  rateLimited = true;
+  await tick(now + 20_000);
+  await expect.poll(async () => (await watch()).nextPollAt).toBe(now + 80_000);
+  await expect.poll(() => worker.evaluate(() => chrome.action.getBadgeText({}))).toBe('');
+  expect((await watch()).items).toEqual([]);
+  const requestsBeforeBackoff = mailboxRequests;
+  await tick(now + 50_000);
+  await expect
+    .poll(() =>
+      worker.evaluate(async () => (await chrome.alarms.get('watch-inbox'))?.scheduledTime),
+    )
+    .toBeGreaterThan(Date.now() + 5000);
+  expect(mailboxRequests).toBe(requestsBeforeBackoff);
+
+  rateLimited = false;
+  deliveredAt = new Date(now + 81_000).toISOString();
+  await tick(now + 81_000);
+  await expect.poll(() => worker.evaluate(() => chrome.action.getBadgeText({}))).toBe('1');
+  expect(mailboxRequests).toBe(requestsBeforeBackoff + 1);
+
+  revokedUpstream = true;
+  await tick(now + 85_000);
+  await expect.poll(() => worker.evaluate(() => chrome.action.getBadgeText({}))).toBe('');
+  expect(await worker.evaluate(() => chrome.action.getTitle({}))).toBe('Open Maildock');
+  expect(await worker.evaluate(() => chrome.storage.session.get(['auth', 'watch']))).toEqual({});
+  const requestsAfterRevocation = mailboxRequests;
+  await tick(now + 115_000);
+  await expect
+    .poll(() =>
+      worker.evaluate(async () => (await chrome.alarms.get('watch-inbox'))?.scheduledTime),
+    )
+    .toBeGreaterThan(Date.now() + 5000);
+  expect(mailboxRequests).toBe(requestsAfterRevocation);
+});
+
+test('clears code badges on dismissal, inbox selection and disconnect', async () => {
+  expect((await command({ type: 'auth.connect' })).ok).toBe(true);
+  deliveredAt = new Date().toISOString();
+  expect((await command({ type: 'watch.poll' })).ok).toBe(true);
+  await expect.poll(() => worker.evaluate(() => chrome.action.getBadgeText({}))).toBe('1');
+  const polled = await command({ type: 'watch.poll' });
+  if (!polled.ok || !polled.state.watch.items[0] || !polled.state.inboxes[0])
+    throw new Error('Code not listed');
+  const messageId = polled.state.watch.items[0].messageId;
+  expect((await command({ type: 'inbox.select', inboxId: polled.state.inboxes[0].id })).ok).toBe(
+    true,
+  );
+  expect(await worker.evaluate(() => chrome.action.getBadgeText({}))).toBe('');
+  expect((await command({ type: 'watch.poll' })).ok).toBe(true);
+  expect(await worker.evaluate(() => chrome.action.getBadgeText({}))).toBe('1');
+  expect((await command({ type: 'watch.dismiss', messageId })).ok).toBe(true);
+  expect(await worker.evaluate(() => chrome.action.getBadgeText({}))).toBe('');
+
+  expect((await command({ type: 'auth.disconnect' })).ok).toBe(true);
+  expect((await command({ type: 'auth.connect' })).ok).toBe(true);
+  expect((await command({ type: 'watch.poll' })).ok).toBe(true);
+  expect(await worker.evaluate(() => chrome.action.getBadgeText({}))).toBe('1');
+  expect((await command({ type: 'auth.disconnect' })).ok).toBe(true);
+  expect(await worker.evaluate(() => chrome.action.getBadgeText({}))).toBe('');
+  expect(await worker.evaluate(() => chrome.action.getTitle({}))).toBe('Open Maildock');
 });

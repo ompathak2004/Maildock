@@ -4,7 +4,7 @@ This describes the current Maildock source implementation. It is not a substitut
 
 ## Where data goes
 
-Maildock has no application backend, analytics endpoint, advertising integration, or error-reporting service. The extension contacts Resend directly for OAuth and inbox operations. Login uses Resend's authorization page. Resend continues to store and process mail under its own policies.
+Maildock has no application backend, analytics endpoint, advertising integration, or error-reporting service. The extension contacts Resend directly for OAuth and inbox operations, including background inbox checks while connected with the panel closed. Login uses Resend's authorization page. Resend continues to store and process mail under its own policies.
 
 The chosen website receives only the code you explicitly approve for filling. Maildock does not transmit your tokens, mailbox list, or full message bodies to websites. Opening the external Resend link navigates to Resend normally.
 
@@ -20,7 +20,7 @@ The chosen website receives only the code you explicitly approve for filling. Ma
 
 Session storage is not an encrypted password vault. Credentials remain accessible to trusted code in this extension. The design does not protect against a compromised device, browser, or extension update. Browser/OS memory handling is outside Maildock's control.
 
-Stale codes are cleared when the worker next processes the expiry alarm or another command; a suspended browser can delay cleanup. The worker never fills a code older than three minutes. Removing a code from extension state does not remove the provider's email or a code already entered into a website.
+Stale codes are cleared when the worker next processes the inbox polling alarm or another command; a suspended browser can delay cleanup. The worker never fills a code older than three minutes. Removing a code from extension state does not remove the provider's email or a code already entered into a website. The toolbar badge shows only a count of fresh codes available for review, with no code values or email details.
 
 No data is placed in Chrome sync, telemetry, or application console logs. The clipboard receives a code only when you press **Copy code**; clear it yourself if your clipboard manager keeps history. Per-site permissions you grant with **Always allow** are stored by Chrome, shown under _Allowed websites_, and removed from there. Local preferences reveal the sites and senders you configured; they remain after disconnect so you can reconnect. Uninstalling the extension removes its local preferences.
 
@@ -37,7 +37,7 @@ Closing the browser or uninstalling clears local credentials but cannot guarante
 - `activeTab` and `scripting`: Inspect and fill the tab explicitly granted by a toolbar click.
 - `optional_host_permissions` (`https://*/*`): Declared so you can allow individual websites from the panel. Nothing is granted at install, and Maildock never asks for all sites.
 - `sidePanel`: Keep the verification workflow beside the website.
-- `alarms`: Expire stale codes.
+- `alarms`: Check the connected inbox in the background and expire stale codes.
 - Host permission for `https://api.resend.com/*`: Direct provider requests.
 
 There are no permanent content scripts, all-site host grants, general browsing-history permission, remote scripts, or attachment downloads. The service worker validates the exact destination document before filling.

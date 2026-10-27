@@ -37,9 +37,7 @@ async function selectedInbox(): Promise<Inbox | null> {
   return inboxes.find((value) => value.id === settings.selectedInboxId) ?? inboxes[0] ?? null;
 }
 
-// Codes leave session storage as soon as they fall out of the fresh window, even while the
-// panel is closed, because the half-minute alarm calls this.
-export async function state(): Promise<ViewState> {
+async function state(): Promise<ViewState> {
   const [auth, inboxes, settings, stored] = await Promise.all([
     getAuth(),
     getInboxes(),
@@ -55,6 +53,37 @@ export async function state(): Promise<ViewState> {
   }
   const { clientId: _, ...preferences } = settings;
   return { connected: !!auth, inboxes: auth ? inboxes : [], settings: preferences, watch };
+}
+
+async function updateBadge(): Promise<void> {
+  const { watch } = await state();
+  const count = watch.items.filter((item) => item.kind === 'code' && item.check !== 'fail').length;
+  await Promise.all([
+    chrome.action.setBadgeText({ text: count ? String(count) : '' }),
+    chrome.action.setTitle({
+      title: count
+        ? `Maildock: ${count} ${count === 1 ? 'code' : 'codes'} available`
+        : 'Open Maildock',
+    }),
+  ]);
+}
+
+export async function pollInbox(): Promise<void> {
+  await navigator.locks.request('maildock-state', async () => {
+    try {
+      await poll();
+    } catch (error) {
+      const view = await state();
+      if (view.connected)
+        await saveWatch({
+          ...view.watch,
+          nextPollAt: Date.now() + 30_000,
+          note: publicError(error).error,
+        });
+    } finally {
+      await updateBadge();
+    }
+  });
 }
 
 // A forced poll precedes a fill and must not fall back to cached codes: a code that was fresh
@@ -239,7 +268,13 @@ export async function handleMessage(
   if (!parsed.success)
     return { ok: false, code: 'invalid-command', error: 'The extension request was invalid.' };
   try {
-    return await navigator.locks.request('maildock-state', () => execute(parsed.data));
+    return await navigator.locks.request('maildock-state', async () => {
+      try {
+        return await execute(parsed.data);
+      } finally {
+        await updateBadge();
+      }
+    });
   } catch (error) {
     return { ok: false, ...publicError(error) };
   }
