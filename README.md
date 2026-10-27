@@ -16,7 +16,7 @@ https://github.com/user-attachments/assets/5bade745-f231-48fc-ba25-d6019a83edc6
 2. Maildock watches that inbox while connected, even with the side panel closed. A compact toolbar popup opens once for each new code, with its sender, subject, and authentication result. The badge keeps a count if you close or miss the popup.
 3. You click **Fill code on example.com**. The service worker rechecks the tab, origin, and document, then fills the code. It never clicks Submit.
 
-Everything runs inside the extension. The service worker talks to the Resend API directly. The panel never sees tokens or full message bodies.
+Everything runs inside the extension. The service worker talks to the Resend API directly. The popup and side panel never see tokens or full message bodies.
 
 ## Install
 
@@ -56,7 +56,7 @@ Resend currently requires the `full_access` OAuth scope for inbox operations. Us
 4. Review the code and sender. On a site without permission, close the popup and click the Maildock toolbar icon on the login page to enable filling. Automatic popup opening does not grant page access. Moving between pages on the same site keeps a toolbar-click grant.
 5. Check the site named on the button, then click **Fill code on <site>**. Use **Open Maildock** for the full side panel, sign-in links, and account settings.
 
-Other things the panel does:
+More actions:
 
 - **Copy code** puts the code on the clipboard for pages Maildock cannot fill, such as cross-origin frames.
 - **Open link on <host>** opens a sign-in link from an email that has no code. Nothing opens until you click.
@@ -88,7 +88,7 @@ A sender address is not proof of identity, and a compromised browser or device i
 | `GET /inboxes/{id}/threads/{thread}/emails` | Read recent messages in a thread             |
 | `GET /emails/receiving/{id}`                | Read the SPF/DKIM/DMARC result for a message |
 
-Every response is validated with a schema before the rest of the extension sees it. Polling runs every three seconds while the panel is open, with a 30-second background alarm while it is closed. Both share the same rate-limit backoff. The badge clears when codes are filled, dismissed, expired, or the connection ends. Resend's documentation: [OAuth](https://resend.com/docs/guides/building-a-resend-oauth-client), [Inboxes](https://resend.com/docs/api-reference/inboxes/list-threads), [Receiving](https://resend.com/docs/dashboard/receiving/introduction).
+Every response is validated with a schema before the rest of the extension sees it. Polling runs every three seconds while the connected popup or side panel is open. A 30-second background alarm also checks the inbox while both are closed. All checks share the same rate-limit backoff. The badge clears when codes are filled, dismissed, expired, or the connection ends. Resend's documentation: [OAuth](https://resend.com/docs/guides/building-a-resend-oauth-client), [Inboxes](https://resend.com/docs/api-reference/inboxes/list-threads), [Receiving](https://resend.com/docs/dashboard/receiving/introduction).
 
 ## Configuration
 
@@ -117,7 +117,7 @@ Project layout:
 ```
 src/core/        state model, schemas, code and link extraction (no browser APIs)
 src/background/  service worker: commands, OAuth, Resend client, page filling
-src/ui/          side panel (React)
+src/ui/          toolbar popup and side panel (React)
 scripts/         icon rendering and production manifest audit
 tests/           unit tests and Playwright browser tests
 docs/            architecture, privacy and retention, research notes

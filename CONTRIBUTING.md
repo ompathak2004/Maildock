@@ -17,7 +17,7 @@ Thanks for taking the time to contribute. This guide covers how to set up the pr
 
 ## Set up the project
 
-Requirements: Node.js 24 or newer, npm, and Chrome 120 or newer.
+Requirements: Node.js 24 or newer, npm, and Chrome 127 or newer.
 
 ```sh
 git clone https://github.com/<your-username>/Maildock.git
@@ -64,7 +64,7 @@ These rules protect users. A pull request that breaks one will not be merged.
 
 - **Never fill or submit silently.** The user clicks one labelled button per code. The worker rechecks the tab, origin, and document before it injects.
 - **Credentials, message bodies, codes, and tokenized links never reach logs, telemetry, browser sync, or `chrome.storage.local`.** Tokens and fresh codes live only in session storage.
-- **Only the side panel may send privileged commands.** No content-script fetch proxy, no `externally_connectable`, no webpage bridge.
+- **Only the exact bundled popup and side panel URLs may send privileged commands.** No content-script fetch proxy, no `externally_connectable`, no webpage bridge.
 - **No new permissions without a design discussion.** The build audit (`scripts/check-build.mjs`) fails when the manifest permissions change.
 - **External JSON is untrusted until parsed.** Validate every provider response with a zod schema before the domain code sees it.
 - **Keep the code direct.** Explicit imports, descriptive names, discriminated unions for state. No speculative abstraction layers. A comment explains a non-obvious constraint; prefer encoding the constraint in a type or runtime check.

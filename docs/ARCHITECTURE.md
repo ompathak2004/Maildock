@@ -9,14 +9,14 @@ Website sends email → Resend inbox
                       ↙           ↘
        trusted session state     selected code + metadata
                                          ↓
-                                   React side panel
+                              React popup / side panel
                                          ↓ explicit review
                     worker rechecks origin + tab + document
                                          ↓ one code
                       isolated script in the selected page
 ```
 
-TypeScript supplies shared domain types, Zod validates network/storage/message boundaries, React renders the panel, and WXT bundles extension entry points. Native Chrome APIs avoid a browser compatibility layer. HTML parsing uses `htmlparser2` without a DOM or remote resources. No server, database, webhook, provider SDK, or generic plugin abstraction is needed for this polling workflow.
+TypeScript supplies shared domain types, Zod validates network/storage/message boundaries, React renders the popup and side panel, and WXT bundles extension entry points. Native Chrome APIs avoid a browser compatibility layer. HTML parsing uses `htmlparser2` without a DOM or remote resources. No server, database, webhook, provider SDK, or generic plugin abstraction is needed for this polling workflow.
 
 | Module                      | Responsibility                                                                                 |
 | --------------------------- | ---------------------------------------------------------------------------------------------- |
@@ -36,11 +36,11 @@ Only messages from our exact bundled `sidepanel.html` and `popup.html` URLs, ext
 
 ## State and concurrency
 
-One installation has one inbox watch. It holds at most five fresh codes, the IDs of consumed messages, poll timing, a transient provider note, and the last fill confirmation. Connecting enables inbox checks even while the panel is closed. Codes leave when they fall out of the three-minute window, are filled, or are discarded. A transient network error keeps the last successful list and shows the note. Navigation never changes this state because the page is resolved at fill time, not at watch time.
+One installation has one inbox watch. It holds at most five fresh codes, the IDs of consumed and announced messages, poll timing, a transient provider note, and the last fill confirmation. Connecting enables inbox checks even while the popup and panel are closed. Codes leave when they fall out of the three-minute window, are filled, or are discarded. A transient network error keeps the last successful list and shows the note. Navigation never changes this state because the page is resolved at fill time, not at watch time.
 
-The `maildock-state` Web Lock serializes commands and expiry work across panels. `maildock-auth` serializes authentication and refresh-token rotation. These locks are worker-local coordination primitives, not a distributed lock across devices. Only the worker accesses tokens. A lost response during refresh can require reconnection; stale tokens are never reused after a confirmed invalid grant.
+The `maildock-state` Web Lock serializes commands and expiry work across popup and panel instances. `maildock-auth` serializes authentication and refresh-token rotation. These locks are worker-local coordination primitives, not a distributed lock across devices. Only the worker accesses tokens. A lost response during refresh can require reconnection; stale tokens are never reused after a confirmed invalid grant.
 
-The watch survives worker suspension through session storage, but not a browser restart or extension reload. The panel requests polls every three seconds while connected; the worker independently enforces the next permissible poll time. A 30-second alarm also polls the inbox and prunes stale codes without requiring an open panel. Worker startup checks for the alarm without resetting an existing schedule, then refreshes the watch. Commands and background polls share the state lock and backoff. Chrome may delay alarms; this is not a real-time delivery guarantee. No short-interval daemon relies on the worker remaining alive.
+The watch survives worker suspension through session storage, but not a browser restart or extension reload. The popup and panel request polls every three seconds while connected; the worker independently enforces the next permissible poll time. A 30-second alarm also polls the inbox and prunes stale codes without requiring either UI to be open. Worker startup checks for the alarm without resetting an existing schedule, then refreshes the watch. Commands and background polls share the state lock and backoff. Chrome may delay alarms; this is not a real-time delivery guarantee. No short-interval daemon relies on the worker remaining alive.
 
 The toolbar badge is derived from fresh code candidates whose sender check is not `fail`; sign-in links do not increment it. It is a count for review, not a claim that a code belongs to the current website. Badge text and tooltip contain no codes, subjects, senders, or URLs. Commands and background polls reconcile the badge even after errors, so expiration or lost authorization removes stale counts.
 
