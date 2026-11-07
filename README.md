@@ -136,3 +136,5 @@ Resend is the only provider today. Gmail support, automatic submission, cross-fr
 ## License
 
 [MIT](LICENSE) © Om Pathak. The particle wordmark adapts [React Bits](https://github.com/DavidHDev/react-bits); its notice ships in `public/licenses/react-bits.txt`.
+
+Staged line: added before the handoff.
